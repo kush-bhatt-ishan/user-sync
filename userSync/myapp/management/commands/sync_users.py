@@ -201,7 +201,7 @@ class Command(BaseCommand):
     def _process_employee(self, sync_run: SyncRun, employee: Dict[str, Any]) -> None:
         record = get_or_create_sync_record(employee)
         try:
-            self._upsert_user(record, employee)
+            action = self._upsert_user(record, employee)
         except Exception as exc:  # pragma: no cover - command-level safety
             update_sync_record_status(record, "FAILED", message=str(exc), error_code="SYNC_FAILED")
             create_sync_log(sync_run, record, "FAILED", f"Microsoft sync failed: {exc}", level="ERROR", error_code="SYNC_FAILED")
@@ -214,13 +214,14 @@ class Command(BaseCommand):
                 )
             )
         else:
-            update_sync_record_status(record, "SYNCED", message="User synced successfully")
-            create_sync_log(sync_run, record, "SUCCESS", "User synced successfully to Microsoft", level="INFO")
+            success_message = "User created successfully in Microsoft" if action == "created" else "User synced successfully to Microsoft"
+            update_sync_record_status(record, "SYNCED", message=success_message)
+            create_sync_log(sync_run, record, "SUCCESS", success_message, level="INFO")
             sync_run.synced_records += 1
             sync_run.save(update_fields=["synced_records"])
             self.stdout.write(
                 self.style.SUCCESS(
-                    f"SYNCED | employee={record.source_employee_id or '-'} | email={record.email or '-'} | status=SYNCED"
+                    f"SYNCED | employee={record.source_employee_id or '-'} | email={record.email or '-'} | status=SYNCED | action={action}"
                 )
             )
 
@@ -236,7 +237,7 @@ class Command(BaseCommand):
                 "designation": record.designation or "",
             }
         try:
-            self._upsert_user(record, employee)
+            action = self._upsert_user(record, employee)
         except Exception as exc:  # pragma: no cover - command-level safety
             update_sync_record_status(record, "FAILED", message=str(exc), error_code="RETRY_FAILED")
             create_sync_log(sync_run, record, "FAILED", f"Retry failed: {exc}", level="WARNING", error_code="RETRY_FAILED")
@@ -249,19 +250,20 @@ class Command(BaseCommand):
                 )
             )
         else:
-            update_sync_record_status(record, "SYNCED", message="Retry synced successfully")
-            create_sync_log(sync_run, record, "SUCCESS", "Retry synced successfully to Microsoft", level="INFO")
+            success_message = "User created successfully in Microsoft" if action == "created" else "Retry synced successfully to Microsoft"
+            update_sync_record_status(record, "SYNCED", message=success_message)
+            create_sync_log(sync_run, record, "SUCCESS", success_message, level="INFO")
             sync_run.synced_records += 1
             sync_run.save(update_fields=["synced_records"])
             self.stdout.write(
                 self.style.SUCCESS(
-                    f"RETRY SYNCED | employee={record.source_employee_id or '-'} | email={record.email or '-'} | status=SYNCED"
+                    f"RETRY SYNCED | employee={record.source_employee_id or '-'} | email={record.email or '-'} | status=SYNCED | action={action}"
                 )
             )
 
-    def _upsert_user(self, record: EmployeeSyncRecord, employee: Dict[str, Any]) -> None:
+    def _upsert_user(self, record: EmployeeSyncRecord, employee: Dict[str, Any]) -> str:
         graph_client = MicrosoftGraphClient()
-        graph_client.upsert_user(employee)
+        return graph_client.upsert_user(employee)
 
     def _print_run_summary(self, sync_run: SyncRun) -> None:
         logs = list(sync_run.logs.order_by("-created_at")[:10])

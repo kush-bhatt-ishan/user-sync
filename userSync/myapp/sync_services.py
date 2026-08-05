@@ -1,4 +1,5 @@
 import base64
+import copy
 import json
 import logging
 import os
@@ -89,11 +90,39 @@ def _normalize_account_enabled(value: Any) -> bool:
 def _resolve_field_value(employee: Dict[str, Any], field_names: Any) -> Any:
     if isinstance(field_names, (list, tuple)):
         for field_name in field_names:
-            value = employee.get(field_name)
+            value = _resolve_field_value(employee, field_name)
             if value not in (None, ""):
                 return value
         return None
-    return employee.get(field_names)
+
+    if not isinstance(employee, dict):
+        return None
+
+    value = employee.get(field_names)
+    if value not in (None, ""):
+        return value
+
+    nested_basic_detail = employee.get("BasicDetail")
+    if isinstance(nested_basic_detail, dict):
+        value = nested_basic_detail.get(field_names)
+        if value not in (None, ""):
+            return value
+
+    nested_basic_details = employee.get("BasicDetails")
+    if isinstance(nested_basic_details, dict):
+        detail = nested_basic_details.get("BasicDetail")
+        if isinstance(detail, dict):
+            value = detail.get(field_names)
+            if value not in (None, ""):
+                return value
+
+    nested_employee = employee.get("employee")
+    if isinstance(nested_employee, dict):
+        value = _resolve_field_value(nested_employee, field_names)
+        if value not in (None, ""):
+            return value
+
+    return None
 
 
 def build_graph_payload(employee: Dict[str, Any]) -> Dict[str, Any]:
@@ -131,7 +160,7 @@ def get_retry_candidates() -> Iterable[EmployeeSyncRecord]:
 
 
 def get_or_create_sync_record(employee: Dict[str, Any]) -> EmployeeSyncRecord:
-    source_payload = employee.copy()
+    source_payload = copy.deepcopy(employee)
     graph_payload = build_graph_payload(source_payload)
     source_employee_id = (
         source_payload.get("employeeCode")
@@ -292,54 +321,57 @@ class PeopleStrongClient:
         if not isinstance(raw, dict):
             return {}
 
+        normalized = copy.deepcopy(raw)
         direct = raw.get("employee") if isinstance(raw.get("employee"), dict) else raw
+
         if isinstance(direct.get("BasicDetails"), dict) and isinstance(direct["BasicDetails"].get("BasicDetail"), dict):
             basic_detail = direct["BasicDetails"]["BasicDetail"]
-            return {
-                "EmployeeName": basic_detail.get("EmployeeName") or basic_detail.get("employeeName") or "",
-                "EmployeeCode": basic_detail.get("EmployeeCode") or basic_detail.get("employeeCode") or "",
-                "FirstName": basic_detail.get("FirstName") or basic_detail.get("firstName") or "",
-                "LastName": basic_detail.get("LastName") or basic_detail.get("lastName") or "",
-                "OfficialMailID": basic_detail.get("OfficialMailID") or basic_detail.get("email") or basic_detail.get("workEmail") or "",
-                "Department": basic_detail.get("Department") or basic_detail.get("department") or "",
-                "DesignationName": basic_detail.get("DesignationName") or basic_detail.get("designation") or basic_detail.get("jobTitle") or "",
-                "Company": basic_detail.get("Company") or basic_detail.get("company") or "",
-                "Office": basic_detail.get("Office") or basic_detail.get("office") or "",
-                "City": basic_detail.get("City") or basic_detail.get("city") or "",
-                "State": basic_detail.get("State") or basic_detail.get("state") or "",
-                "Country": basic_detail.get("Country") or basic_detail.get("country") or "",
-                "MobileNo": basic_detail.get("MobileNo") or basic_detail.get("mobileNo") or basic_detail.get("mobilePhone") or "",
-                "EmploymentStatus": basic_detail.get("EmploymentStatus") or basic_detail.get("employmentStatus") or "",
-                "employeeCode": basic_detail.get("EmployeeCode") or basic_detail.get("employeeCode") or "",
-                "firstName": basic_detail.get("FirstName") or basic_detail.get("firstName") or "",
-                "lastName": basic_detail.get("LastName") or basic_detail.get("lastName") or "",
-                "email": basic_detail.get("OfficialMailID") or basic_detail.get("email") or basic_detail.get("workEmail") or "",
-                "department": basic_detail.get("Department") or basic_detail.get("department") or "",
-                "designation": basic_detail.get("DesignationName") or basic_detail.get("designation") or basic_detail.get("jobTitle") or "",
-            }
+            normalized.setdefault("BasicDetail", basic_detail)
+            normalized.setdefault("BasicDetails", direct.get("BasicDetails"))
+            normalized.setdefault("employee", direct)
+            normalized["EmployeeName"] = basic_detail.get("EmployeeName") or basic_detail.get("employeeName") or normalized.get("EmployeeName") or ""
+            normalized["EmployeeCode"] = basic_detail.get("EmployeeCode") or basic_detail.get("employeeCode") or normalized.get("EmployeeCode") or ""
+            normalized["FirstName"] = basic_detail.get("FirstName") or basic_detail.get("firstName") or normalized.get("FirstName") or ""
+            normalized["LastName"] = basic_detail.get("LastName") or basic_detail.get("lastName") or normalized.get("LastName") or ""
+            normalized["OfficialMailID"] = basic_detail.get("OfficialMailID") or basic_detail.get("email") or basic_detail.get("workEmail") or normalized.get("OfficialMailID") or ""
+            normalized["Department"] = basic_detail.get("Department") or basic_detail.get("department") or normalized.get("Department") or ""
+            normalized["DesignationName"] = basic_detail.get("DesignationName") or basic_detail.get("designation") or basic_detail.get("jobTitle") or normalized.get("DesignationName") or ""
+            normalized["Company"] = basic_detail.get("Company") or basic_detail.get("company") or normalized.get("Company") or ""
+            normalized["Office"] = basic_detail.get("Office") or basic_detail.get("office") or normalized.get("Office") or ""
+            normalized["City"] = basic_detail.get("City") or basic_detail.get("city") or normalized.get("City") or ""
+            normalized["State"] = basic_detail.get("State") or basic_detail.get("state") or normalized.get("State") or ""
+            normalized["Country"] = basic_detail.get("Country") or basic_detail.get("country") or normalized.get("Country") or ""
+            normalized["MobileNo"] = basic_detail.get("MobileNo") or basic_detail.get("mobileNo") or basic_detail.get("mobilePhone") or normalized.get("MobileNo") or ""
+            normalized["EmploymentStatus"] = basic_detail.get("EmploymentStatus") or basic_detail.get("employmentStatus") or normalized.get("EmploymentStatus") or ""
+            normalized["employeeCode"] = basic_detail.get("EmployeeCode") or basic_detail.get("employeeCode") or normalized.get("employeeCode") or ""
+            normalized["firstName"] = basic_detail.get("FirstName") or basic_detail.get("firstName") or normalized.get("firstName") or ""
+            normalized["lastName"] = basic_detail.get("LastName") or basic_detail.get("lastName") or normalized.get("lastName") or ""
+            normalized["email"] = basic_detail.get("OfficialMailID") or basic_detail.get("email") or basic_detail.get("workEmail") or normalized.get("email") or ""
+            normalized["department"] = basic_detail.get("Department") or basic_detail.get("department") or normalized.get("department") or ""
+            normalized["designation"] = basic_detail.get("DesignationName") or basic_detail.get("designation") or basic_detail.get("jobTitle") or normalized.get("designation") or ""
+            return normalized
 
-        return {
-            "EmployeeName": direct.get("EmployeeName") or direct.get("employeeName") or "",
-            "EmployeeCode": direct.get("employeeCode") or direct.get("employeeId") or direct.get("employee_code") or raw.get("employeeCode") or raw.get("employeeId") or "",
-            "FirstName": direct.get("firstName") or direct.get("first_name") or raw.get("firstName") or raw.get("first_name") or "",
-            "LastName": direct.get("lastName") or direct.get("last_name") or raw.get("lastName") or raw.get("last_name") or "",
-            "OfficialMailID": direct.get("OfficialMailID") or direct.get("email") or direct.get("workEmail") or raw.get("OfficialMailID") or raw.get("email") or raw.get("workEmail") or "",
-            "Department": direct.get("Department") or direct.get("department") or direct.get("departmentName") or raw.get("Department") or raw.get("department") or raw.get("departmentName") or "",
-            "DesignationName": direct.get("DesignationName") or direct.get("designation") or direct.get("jobTitle") or raw.get("DesignationName") or raw.get("designation") or raw.get("jobTitle") or "",
-            "Company": direct.get("Company") or direct.get("company") or raw.get("Company") or raw.get("company") or "",
-            "Office": direct.get("Office") or direct.get("office") or raw.get("Office") or raw.get("office") or "",
-            "City": direct.get("City") or direct.get("city") or raw.get("City") or raw.get("city") or "",
-            "State": direct.get("State") or direct.get("state") or raw.get("State") or raw.get("state") or "",
-            "Country": direct.get("Country") or direct.get("country") or raw.get("Country") or raw.get("country") or "",
-            "MobileNo": direct.get("MobileNo") or direct.get("mobileNo") or direct.get("mobilePhone") or raw.get("MobileNo") or raw.get("mobileNo") or raw.get("mobilePhone") or "",
-            "EmploymentStatus": direct.get("EmploymentStatus") or direct.get("employmentStatus") or raw.get("EmploymentStatus") or raw.get("employmentStatus") or "",
-            "employeeCode": direct.get("employeeCode") or direct.get("employeeId") or direct.get("employee_code") or raw.get("employeeCode") or raw.get("employeeId") or "",
-            "firstName": direct.get("firstName") or direct.get("first_name") or raw.get("firstName") or raw.get("first_name") or "",
-            "lastName": direct.get("lastName") or direct.get("last_name") or raw.get("lastName") or raw.get("last_name") or "",
-            "email": direct.get("email") or direct.get("workEmail") or raw.get("email") or raw.get("workEmail") or "",
-            "department": direct.get("department") or direct.get("departmentName") or raw.get("department") or raw.get("departmentName") or "",
-            "designation": direct.get("designation") or direct.get("jobTitle") or raw.get("jobTitle") or raw.get("designation") or "",
-        }
+        normalized["EmployeeName"] = direct.get("EmployeeName") or direct.get("employeeName") or normalized.get("EmployeeName") or ""
+        normalized["EmployeeCode"] = direct.get("employeeCode") or direct.get("employeeId") or direct.get("employee_code") or raw.get("employeeCode") or raw.get("employeeId") or normalized.get("EmployeeCode") or ""
+        normalized["FirstName"] = direct.get("firstName") or direct.get("first_name") or raw.get("firstName") or raw.get("first_name") or normalized.get("FirstName") or ""
+        normalized["LastName"] = direct.get("lastName") or direct.get("last_name") or raw.get("lastName") or raw.get("last_name") or normalized.get("LastName") or ""
+        normalized["OfficialMailID"] = direct.get("OfficialMailID") or direct.get("email") or direct.get("workEmail") or raw.get("OfficialMailID") or raw.get("email") or raw.get("workEmail") or normalized.get("OfficialMailID") or ""
+        normalized["Department"] = direct.get("Department") or direct.get("department") or direct.get("departmentName") or raw.get("Department") or raw.get("department") or raw.get("departmentName") or normalized.get("Department") or ""
+        normalized["DesignationName"] = direct.get("DesignationName") or direct.get("designation") or direct.get("jobTitle") or raw.get("DesignationName") or raw.get("designation") or raw.get("jobTitle") or normalized.get("DesignationName") or ""
+        normalized["Company"] = direct.get("Company") or direct.get("company") or raw.get("Company") or raw.get("company") or normalized.get("Company") or ""
+        normalized["Office"] = direct.get("Office") or direct.get("office") or raw.get("Office") or raw.get("office") or normalized.get("Office") or ""
+        normalized["City"] = direct.get("City") or direct.get("city") or raw.get("City") or raw.get("city") or normalized.get("City") or ""
+        normalized["State"] = direct.get("State") or direct.get("state") or raw.get("State") or raw.get("state") or normalized.get("State") or ""
+        normalized["Country"] = direct.get("Country") or direct.get("country") or raw.get("Country") or raw.get("country") or normalized.get("Country") or ""
+        normalized["MobileNo"] = direct.get("MobileNo") or direct.get("mobileNo") or direct.get("mobilePhone") or raw.get("MobileNo") or raw.get("mobileNo") or raw.get("mobilePhone") or normalized.get("MobileNo") or ""
+        normalized["EmploymentStatus"] = direct.get("EmploymentStatus") or direct.get("employmentStatus") or raw.get("EmploymentStatus") or raw.get("employmentStatus") or normalized.get("EmploymentStatus") or ""
+        normalized["employeeCode"] = direct.get("employeeCode") or direct.get("employeeId") or direct.get("employee_code") or raw.get("employeeCode") or raw.get("employeeId") or normalized.get("employeeCode") or ""
+        normalized["firstName"] = direct.get("firstName") or direct.get("first_name") or raw.get("firstName") or raw.get("first_name") or normalized.get("firstName") or ""
+        normalized["lastName"] = direct.get("lastName") or direct.get("last_name") or raw.get("lastName") or raw.get("last_name") or normalized.get("lastName") or ""
+        normalized["email"] = direct.get("email") or direct.get("workEmail") or raw.get("email") or raw.get("workEmail") or normalized.get("email") or ""
+        normalized["department"] = direct.get("department") or direct.get("departmentName") or raw.get("department") or raw.get("departmentName") or normalized.get("department") or ""
+        normalized["designation"] = direct.get("designation") or direct.get("jobTitle") or raw.get("jobTitle") or raw.get("designation") or normalized.get("designation") or ""
+        return normalized
 
 
 class MicrosoftGraphClient:
@@ -447,7 +479,7 @@ class MicrosoftGraphClient:
 
         return f"Microsoft Graph request failed with HTTP {status_code}: {raw}"
 
-    def upsert_user(self, employee: Dict[str, Any]) -> Dict[str, Any]:
+    def upsert_user(self, employee: Dict[str, Any]) -> str:
         payload = build_graph_payload(employee)
         email = payload.get("userPrincipalName") or payload.get("mail") or ""
 
@@ -459,13 +491,11 @@ class MicrosoftGraphClient:
             logger.info("Microsoft user already exists for %s; updating", email)
             update_payload = {
                 key: value for key, value in payload.items()
-                if key in {"accountEnabled", "displayName", "givenName", "surname", "jobTitle", "department", "companyName", "employeeId", "officeLocation", "city", "state", "country", "mobilePhone"}
+                # if key in {"accountEnabled", "displayName", "givenName", "surname", "jobTitle", "department", "companyName", "employeeId", "officeLocation", "city", "state", "country", "mobilePhone"}
+                if key in {"accountEnabled", "jobTitle", "department", "companyName", "employeeId", "officeLocation", "city", "state", "country", "mobilePhone"}
             }
-            # response = self.update_user(existing["id"], update_payload)
-            # print(f"existingID: {existing['id']}")
-            # print(f"response: {response}")
-            # exit()
-            return self.update_user(existing["id"], update_payload)
+            self.update_user(existing["id"], update_payload)
+            return "updated"
 
         logger.info("Microsoft user not found for %s; creating", email)
         create_payload = dict(payload)
@@ -474,4 +504,5 @@ class MicrosoftGraphClient:
             "forceChangePasswordNextSignIn": True,
             "password": self.temp_password,
         }
-        return self.create_user(create_payload)
+        self.create_user(create_payload)
+        return "created"
