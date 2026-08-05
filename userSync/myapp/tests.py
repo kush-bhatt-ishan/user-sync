@@ -1,5 +1,5 @@
 import io
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from django.test import TestCase
 
@@ -78,6 +78,19 @@ class SyncServiceTests(TestCase):
         self.assertEqual(record.graph_payload["surname"], "Smith")
         self.assertEqual(record.graph_payload["userPrincipalName"], "jane.smith@example.com")
 
+    def test_find_user_uses_graph_filter_query(self):
+        client = MicrosoftGraphClient()
+        response = Mock()
+        response.__enter__ = Mock(return_value=response)
+        response.__exit__ = Mock(return_value=False)
+        response.read.return_value = b'{"value": [{"id": "123", "mail": "john@example.com"}]}'
+
+        with patch.object(client, "get_access_token", return_value="token"), patch("myapp.sync_services.request.urlopen", return_value=response) as urlopen:
+            found = client.find_user("john@example.com")
+
+        self.assertEqual(found["id"], "123")
+        self.assertIn("users?$filter=", urlopen.call_args.args[0].full_url)
+
     def test_upsert_user_omits_unsupported_mail_property_on_create(self):
         client = MicrosoftGraphClient()
         employee = {
@@ -104,6 +117,23 @@ class SyncServiceTests(TestCase):
         self.assertNotIn("mail", payload)
         self.assertEqual(payload["userPrincipalName"], "john.doe@example.com")
         self.assertIn("passwordProfile", payload)
+
+    def test_upsert_user_create_payload_uses_company_and_mailnickname_defaults(self):
+        client = MicrosoftGraphClient()
+        employee = {
+            "FirstName": "John",
+            "LastName": "Doe",
+            "email": "john.doe9@ishantechnologies.com",
+            "employeeCode": "D1002",
+        }
+
+        with patch.object(client, "find_user", return_value=None), patch.object(client, "create_user", return_value={"id": "123"}) as create_user:
+            client.upsert_user(employee)
+
+        payload = create_user.call_args.args[0]
+        self.assertEqual(payload["companyName"], "Ishan Technologies")
+        self.assertEqual(payload["mailNickname"], "john.doe9")
+        self.assertEqual(payload["userPrincipalName"], "john.doe9@ishantechnologies.com")
 
     def test_failed_records_are_returned_for_retry(self):
         failed_record = EmployeeSyncRecord.objects.create(

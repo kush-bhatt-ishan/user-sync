@@ -106,7 +106,8 @@ def build_graph_payload(employee: Dict[str, Any]) -> Dict[str, Any]:
     payload.setdefault("userPrincipalName", email)
     payload.setdefault("mailNickname", email.split("@")[0] if "@" in email else email)
     payload.setdefault("accountEnabled", True)
-    payload.setdefault("companyName", getattr(settings, "DEFAULT_COMPANY_NAME", "Ishan Technologies"))
+    default_company_name = getattr(settings, "DEFAULT_COMPANY_NAME", "Ishan Technologies")
+    payload["companyName"] = _resolve_string(payload.get("companyName")) or default_company_name
 
     if not payload.get("displayName"):
         first_name = _resolve_string(payload.get("givenName"))
@@ -367,15 +368,20 @@ class MicrosoftGraphClient:
 
     def find_user(self, email: str) -> Optional[Dict[str, Any]]:
         token = self.get_access_token()
-        encoded = parse.quote(email)
+        encoded_email = parse.quote(email)
+        filter_query = parse.quote(f"mail eq '{email}' or userPrincipalName eq '{email}'")
         req = request.Request(
-            f"https://graph.microsoft.com/v1.0/users/{encoded}",
+            f"https://graph.microsoft.com/v1.0/users?$filter={filter_query}&$top=1",
             headers={"Authorization": f"Bearer {token}"},
             method="GET",
         )
         try:
             with request.urlopen(req, timeout=30) as response:
-                return json.loads(response.read().decode("utf-8"))
+                data = json.loads(response.read().decode("utf-8"))
+                users = data.get("value") if isinstance(data, dict) else None
+                if isinstance(users, list) and users:
+                    return users[0]
+                return None
         except Exception:
             return None
 
@@ -391,9 +397,13 @@ class MicrosoftGraphClient:
             },
             method="POST",
         )
-        # print(self._urlopen_with_debug(req, timeout=60))
-        with request.urlopen(req, timeout=60) as response:
-            return json.loads(response.read().decode("utf-8"))
+        try:
+            with request.urlopen(req, timeout=60) as response:
+                return json.loads(response.read().decode("utf-8"))
+        except error.HTTPError as exc:
+            raw = exc.read().decode("utf-8", errors="replace")
+            message = self._format_graph_error(raw, exc.code)
+            raise RuntimeError(message) from exc
 
     def update_user(self, user_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         token = self.get_access_token()
@@ -407,28 +417,35 @@ class MicrosoftGraphClient:
             },
             method="PATCH",
         )
-        # print(f"URL: {req.full_url}")
-        # print(f"BODY: {body.decode('utf-8')}")
-        # print(f"url: {parse.quote(user_id)}")
-        # print(f"BODY: {body}")
-        # print(f"TOKEN: {token}")
 
         try:
             with request.urlopen(req, timeout=60) as response:
                 raw = response.read().decode("utf-8")
-                print(f"STATUS: {response.status}")
-                print(f"RESPONSE: {raw!r}")
                 return json.loads(raw) if raw.strip() else {}
-        except error.HTTPError as e:
-            raw = e.read().decode("utf-8", errors="replace")
-            print(f"ERROR STATUS: {e.code}")
-            print(f"ERROR RESPONSE: {raw}")
-            raise
-        # exit()
+        except error.HTTPError as exc:
+            raw = exc.read().decode("utf-8", errors="replace")
+            message = self._format_graph_error(raw, exc.code)
+            raise RuntimeError(message) from exc
 
-        
-        # with request.urlopen(req, timeout=60) as response:
-        #     return json.loads(response.read().decode("utf-8"))
+    def _format_graph_error(self, raw: str, status_code: int) -> str:
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError:
+            payload = {}
+
+        error_payload = payload.get("error") if isinstance(payload, dict) else None
+        if isinstance(error_payload, dict):
+            code = error_payload.get("code") or "UNKNOWN"
+            message = error_payload.get("message") or "Microsoft Graph request failed"
+            if status_code == 403 and code == "Authorization_RequestDenied":
+                return (
+                    f"Microsoft Graph permission denied ({code}): {message}. "
+                    "Grant the app the User.ReadWrite.All (and Directory.ReadWrite.All if needed) permission "
+                    "and ensure admin consent is completed."
+                )
+            return f"Microsoft Graph error ({code}): {message}"
+
+        return f"Microsoft Graph request failed with HTTP {status_code}: {raw}"
 
     def upsert_user(self, employee: Dict[str, Any]) -> Dict[str, Any]:
         payload = build_graph_payload(employee)
@@ -439,6 +456,7 @@ class MicrosoftGraphClient:
 
         existing = self.find_user(email)
         if existing and existing.get("id"):
+            logger.info("Microsoft user already exists for %s; updating", email)
             update_payload = {
                 key: value for key, value in payload.items()
                 if key in {"accountEnabled", "displayName", "givenName", "surname", "jobTitle", "department", "companyName", "employeeId", "officeLocation", "city", "state", "country", "mobilePhone"}
@@ -449,6 +467,7 @@ class MicrosoftGraphClient:
             # exit()
             return self.update_user(existing["id"], update_payload)
 
+        logger.info("Microsoft user not found for %s; creating", email)
         create_payload = dict(payload)
         create_payload.pop("mail", None)
         create_payload["passwordProfile"] = {
