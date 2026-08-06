@@ -15,6 +15,7 @@ class EmployeeSyncRecord(models.Model):
     designation = models.CharField(max_length=200, blank=True, null=True)
     payload = models.JSONField(blank=True, default=dict)
     graph_payload = models.JSONField(blank=True, default=dict)
+    attempt_history = models.JSONField(blank=True, default=list)
     last_status = models.CharField(max_length=30, default=STATUS_PENDING)
     last_error_message = models.TextField(blank=True, default="")
     last_error_code = models.CharField(max_length=50, blank=True, default="")

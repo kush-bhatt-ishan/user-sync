@@ -5,7 +5,13 @@ from django.test import TestCase
 
 from myapp.management.commands.sync_users import Command
 from myapp.models import EmployeeSyncRecord
-from myapp.sync_services import MicrosoftGraphClient, build_graph_payload, get_or_create_sync_record, get_retry_candidates
+from myapp.sync_services import (
+    MicrosoftGraphClient,
+    build_graph_payload,
+    get_or_create_sync_record,
+    get_retry_candidates,
+    update_sync_record_status,
+)
 
 
 class SyncServiceTests(TestCase):
@@ -78,6 +84,102 @@ class SyncServiceTests(TestCase):
         self.assertEqual(record.graph_payload["surname"], "Smith")
         self.assertEqual(record.graph_payload["userPrincipalName"], "jane.smith@example.com")
 
+    def test_get_or_create_sync_record_preserves_full_source_payload(self):
+        employee = {
+            "BasicDetails": {
+                "BasicDetail": {
+                    "EmployeeCode": "09607",
+                    "FirstName": "Zala Vishnuji Gobarsang",
+                    "LastName": "",
+                    "OfficialMailID": "",
+                    "Department": "SDC1",
+                    "DesignationName": "Field Support Engineer",
+                    "Company": "Ishan Netsol Pvt Ltd",
+                    "Office": "Mehsana",
+                    "City": "Mehsana",
+                    "State": "Gujarat",
+                    "Country": "India",
+                    "EmploymentStatus": "Inactive",
+                    "EmployeeName": "Zala Vishnuji Gobarsang",
+                }
+            },
+            "employee": {
+                "BasicDetails": {
+                    "BasicDetail": {
+                        "EmployeeCode": "09607",
+                        "FirstName": "Zala Vishnuji Gobarsang",
+                        "LastName": "",
+                        "OfficialMailID": "",
+                        "Department": "SDC1",
+                        "DesignationName": "Field Support Engineer",
+                        "Company": "Ishan Netsol Pvt Ltd",
+                        "Office": "Mehsana",
+                        "City": "Mehsana",
+                        "State": "Gujarat",
+                        "Country": "India",
+                        "EmploymentStatus": "Inactive",
+                        "EmployeeName": "Zala Vishnuji Gobarsang",
+                    }
+                }
+            },
+        }
+
+        record = get_or_create_sync_record(employee)
+
+        self.assertIn("BasicDetails", record.payload)
+        self.assertEqual(record.payload["BasicDetails"]["BasicDetail"]["EmployeeCode"], "09607")
+        self.assertEqual(record.payload["EmployeeCode"], "09607")
+
+    def test_get_or_create_sync_record_flattens_nested_payload(self):
+        employee = {
+            "BasicDetails": {
+                "BasicDetail": {
+                    "EmployeeCode": "09607",
+                    "FirstName": "Zala Vishnuji Gobarsang",
+                    "LastName": "",
+                    "OfficialMailID": "",
+                    "Department": "SDC1",
+                    "DesignationName": "Field Support Engineer",
+                    "Company": "Ishan Netsol Pvt Ltd",
+                    "Office": "Mehsana",
+                    "City": "Mehsana",
+                    "State": "Gujarat",
+                    "Country": "India",
+                    "EmploymentStatus": "Inactive",
+                    "EmployeeName": "Zala Vishnuji Gobarsang",
+                }
+            },
+            "employee": {
+                "BasicDetails": {
+                    "BasicDetail": {
+                        "EmployeeCode": "09607",
+                        "FirstName": "Zala Vishnuji Gobarsang",
+                        "LastName": "",
+                        "OfficialMailID": "",
+                        "Department": "SDC1",
+                        "DesignationName": "Field Support Engineer",
+                        "Company": "Ishan Netsol Pvt Ltd",
+                        "Office": "Mehsana",
+                        "City": "Mehsana",
+                        "State": "Gujarat",
+                        "Country": "India",
+                        "EmploymentStatus": "Inactive",
+                        "EmployeeName": "Zala Vishnuji Gobarsang",
+                    }
+                }
+            },
+        }
+
+        record = get_or_create_sync_record(employee)
+
+        stored_payload = record.payload
+        self.assertEqual(stored_payload["EmployeeCode"], "09607")
+        self.assertEqual(stored_payload["EmployeeName"], "Zala Vishnuji Gobarsang")
+        self.assertEqual(stored_payload["Department"], "SDC1")
+        self.assertEqual(stored_payload["email"], "")
+        self.assertIn("BasicDetails", stored_payload)
+        self.assertIn("employee", stored_payload)
+
     def test_find_user_uses_graph_filter_query(self):
         client = MicrosoftGraphClient()
         response = Mock()
@@ -135,6 +237,23 @@ class SyncServiceTests(TestCase):
         self.assertEqual(payload["mailNickname"], "john.doe9")
         self.assertEqual(payload["userPrincipalName"], "john.doe9@ishantechnologies.com")
 
+    def test_update_sync_record_status_records_attempt_history(self):
+        record = EmployeeSyncRecord.objects.create(source_employee_id="E3001", email="jane.doe@example.com")
+
+        update_sync_record_status(
+            record,
+            "SYNCED",
+            message="User synced successfully",
+            source_payload={"employeeCode": "E3001", "email": "jane.doe@example.com"},
+            graph_payload={"userPrincipalName": "jane.doe@example.com", "displayName": "Jane Doe"},
+        )
+
+        self.assertEqual(record.attempt_count, 1)
+        self.assertEqual(record.last_status, "SYNCED")
+        self.assertEqual(record.attempt_history[0]["status"], "SYNCED")
+        self.assertEqual(record.attempt_history[0]["source_payload"]["email"], "jane.doe@example.com")
+        self.assertEqual(record.attempt_history[0]["graph_payload"]["displayName"], "Jane Doe")
+
     def test_failed_records_are_returned_for_retry(self):
         failed_record = EmployeeSyncRecord.objects.create(
             source_employee_id="E1001",
@@ -185,6 +304,18 @@ class SyncServiceTests(TestCase):
             command.handle(limit=1)
 
         self.assertEqual(process_employee.call_count, 1)
+
+    def test_deactivate_mode_calls_graph_client_with_email(self):
+        record = EmployeeSyncRecord.objects.create(source_employee_id="E1001", email="john.doe@example.com")
+        command = Command()
+        command.stdout = io.StringIO()
+        command.stderr = io.StringIO()
+
+        with patch.object(command, "_deactivate_user") as deactivate_user:
+            command.handle(deactivate=True)
+
+        self.assertEqual(deactivate_user.call_count, 1)
+        self.assertEqual(deactivate_user.call_args.args[1].source_employee_id, record.source_employee_id)
 
     def test_multiple_employee_ids_are_filtered(self):
         command = Command()

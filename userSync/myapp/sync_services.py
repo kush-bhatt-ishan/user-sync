@@ -159,21 +159,83 @@ def get_retry_candidates() -> Iterable[EmployeeSyncRecord]:
     return EmployeeSyncRecord.objects.filter(Q(last_status="FAILED") | Q(last_status="PENDING_RETRY")).order_by("updated_at")
 
 
+def _flatten_employee_payload(employee: Dict[str, Any]) -> Dict[str, Any]:
+    flattened = copy.deepcopy(employee)
+    if not isinstance(flattened, dict):
+        return {}
+
+    direct = flattened.get("employee") if isinstance(flattened.get("employee"), dict) else flattened
+    if isinstance(direct.get("BasicDetails"), dict) and isinstance(direct["BasicDetails"].get("BasicDetail"), dict):
+        basic_detail = direct["BasicDetails"]["BasicDetail"]
+        flattened.update({
+            "EmployeeName": basic_detail.get("EmployeeName") or basic_detail.get("employeeName") or flattened.get("EmployeeName") or "",
+            "EmployeeCode": basic_detail.get("EmployeeCode") or basic_detail.get("employeeCode") or flattened.get("EmployeeCode") or "",
+            "FirstName": basic_detail.get("FirstName") or basic_detail.get("firstName") or flattened.get("FirstName") or "",
+            "LastName": basic_detail.get("LastName") or basic_detail.get("lastName") or flattened.get("LastName") or "",
+            "OfficialMailID": basic_detail.get("OfficialMailID") or basic_detail.get("email") or basic_detail.get("workEmail") or flattened.get("OfficialMailID") or "",
+            "Department": basic_detail.get("Department") or basic_detail.get("department") or flattened.get("Department") or "",
+            "DesignationName": basic_detail.get("DesignationName") or basic_detail.get("designation") or basic_detail.get("jobTitle") or flattened.get("DesignationName") or "",
+            "Company": basic_detail.get("Company") or basic_detail.get("company") or flattened.get("Company") or "",
+            "Office": basic_detail.get("Office") or basic_detail.get("office") or flattened.get("Office") or "",
+            "City": basic_detail.get("City") or basic_detail.get("city") or flattened.get("City") or "",
+            "State": basic_detail.get("State") or basic_detail.get("state") or flattened.get("State") or "",
+            "Country": basic_detail.get("Country") or basic_detail.get("country") or flattened.get("Country") or "",
+            "MobileNo": basic_detail.get("MobileNo") or basic_detail.get("mobileNo") or basic_detail.get("mobilePhone") or flattened.get("MobileNo") or "",
+            "EmploymentStatus": basic_detail.get("EmploymentStatus") or basic_detail.get("employmentStatus") or flattened.get("EmploymentStatus") or "",
+            "employeeCode": basic_detail.get("EmployeeCode") or basic_detail.get("employeeCode") or flattened.get("employeeCode") or "",
+            "firstName": basic_detail.get("FirstName") or basic_detail.get("firstName") or flattened.get("firstName") or "",
+            "lastName": basic_detail.get("LastName") or basic_detail.get("lastName") or flattened.get("lastName") or "",
+            "email": basic_detail.get("OfficialMailID") or basic_detail.get("email") or basic_detail.get("workEmail") or flattened.get("email") or "",
+            "department": basic_detail.get("Department") or basic_detail.get("department") or flattened.get("department") or "",
+            "designation": basic_detail.get("DesignationName") or basic_detail.get("designation") or basic_detail.get("jobTitle") or flattened.get("designation") or "",
+        })
+    else:
+        flattened.update({
+            "EmployeeName": direct.get("EmployeeName") or direct.get("employeeName") or flattened.get("EmployeeName") or "",
+            "EmployeeCode": direct.get("employeeCode") or direct.get("employeeId") or direct.get("employee_code") or flattened.get("EmployeeCode") or "",
+            "FirstName": direct.get("firstName") or direct.get("first_name") or flattened.get("FirstName") or "",
+            "LastName": direct.get("lastName") or direct.get("last_name") or flattened.get("LastName") or "",
+            "OfficialMailID": direct.get("OfficialMailID") or direct.get("email") or direct.get("workEmail") or flattened.get("OfficialMailID") or "",
+            "Department": direct.get("Department") or direct.get("department") or direct.get("departmentName") or flattened.get("Department") or "",
+            "DesignationName": direct.get("DesignationName") or direct.get("designation") or direct.get("jobTitle") or flattened.get("DesignationName") or "",
+            "Company": direct.get("Company") or direct.get("company") or flattened.get("Company") or "",
+            "Office": direct.get("Office") or direct.get("office") or flattened.get("Office") or "",
+            "City": direct.get("City") or direct.get("city") or flattened.get("City") or "",
+            "State": direct.get("State") or direct.get("state") or flattened.get("State") or "",
+            "Country": direct.get("Country") or direct.get("country") or flattened.get("Country") or "",
+            "MobileNo": direct.get("MobileNo") or direct.get("mobileNo") or direct.get("mobilePhone") or flattened.get("MobileNo") or "",
+            "EmploymentStatus": direct.get("EmploymentStatus") or direct.get("employmentStatus") or flattened.get("EmploymentStatus") or "",
+            "employeeCode": direct.get("employeeCode") or direct.get("employeeId") or direct.get("employee_code") or flattened.get("employeeCode") or "",
+            "firstName": direct.get("firstName") or direct.get("first_name") or flattened.get("firstName") or "",
+            "lastName": direct.get("lastName") or direct.get("last_name") or flattened.get("lastName") or "",
+            "email": direct.get("email") or direct.get("workEmail") or flattened.get("email") or "",
+            "department": direct.get("department") or direct.get("departmentName") or flattened.get("department") or "",
+            "designation": direct.get("designation") or direct.get("jobTitle") or flattened.get("designation") or "",
+        })
+
+    return flattened
+
+
 def get_or_create_sync_record(employee: Dict[str, Any]) -> EmployeeSyncRecord:
     source_payload = copy.deepcopy(employee)
-    graph_payload = build_graph_payload(source_payload)
+    flattened_payload = _flatten_employee_payload(source_payload)
+    if isinstance(source_payload, dict):
+        for key, value in flattened_payload.items():
+            if key not in source_payload:
+                source_payload[key] = value
+    graph_payload = build_graph_payload(flattened_payload)
     source_employee_id = (
-        source_payload.get("employeeCode")
-        or source_payload.get("employee_id")
-        or source_payload.get("id")
-        or source_payload.get("employeeId")
+        flattened_payload.get("employeeCode")
+        or flattened_payload.get("employee_id")
+        or flattened_payload.get("id")
+        or flattened_payload.get("employeeId")
         or ""
     ).strip()
-    email = (source_payload.get("email") or source_payload.get("OfficialMailID") or "").strip()
-    first_name = (source_payload.get("firstName") or source_payload.get("FirstName") or source_payload.get("first_name") or "").strip()
-    last_name = (source_payload.get("lastName") or source_payload.get("LastName") or source_payload.get("last_name") or "").strip()
-    department = (source_payload.get("department") or source_payload.get("Department") or "").strip()
-    designation = (source_payload.get("designation") or source_payload.get("DesignationName") or source_payload.get("jobTitle") or "").strip()
+    email = (flattened_payload.get("email") or flattened_payload.get("OfficialMailID") or "").strip()
+    first_name = (flattened_payload.get("firstName") or flattened_payload.get("FirstName") or flattened_payload.get("first_name") or "").strip()
+    last_name = (flattened_payload.get("lastName") or flattened_payload.get("LastName") or flattened_payload.get("last_name") or "").strip()
+    department = (flattened_payload.get("department") or flattened_payload.get("Department") or "").strip()
+    designation = (flattened_payload.get("designation") or flattened_payload.get("DesignationName") or flattened_payload.get("jobTitle") or "").strip()
 
     record, created = EmployeeSyncRecord.objects.get_or_create(
         source_employee_id=source_employee_id,
@@ -211,27 +273,51 @@ def get_or_create_sync_record(employee: Dict[str, Any]) -> EmployeeSyncRecord:
     if not record.payload:
         record.payload = source_payload
         updated_fields.append("payload")
-    if not record.graph_payload:
-        record.graph_payload = graph_payload
-        updated_fields.append("graph_payload")
     elif record.payload != source_payload:
         record.payload = source_payload
         record.graph_payload = graph_payload
         updated_fields.extend(["payload", "graph_payload"])
+    elif not record.graph_payload:
+        record.graph_payload = graph_payload
+        updated_fields.append("graph_payload")
     if updated_fields:
         record.save(update_fields=updated_fields)
     return record
 
 
-def update_sync_record_status(record: EmployeeSyncRecord, status: str, *, message: Optional[str] = None, error_code: Optional[str] = None) -> EmployeeSyncRecord:
+def update_sync_record_status(
+    record: EmployeeSyncRecord,
+    status: str,
+    *,
+    message: Optional[str] = None,
+    error_code: Optional[str] = None,
+    source_payload: Optional[Dict[str, Any]] = None,
+    graph_payload: Optional[Dict[str, Any]] = None,
+) -> EmployeeSyncRecord:
+    from django.utils import timezone
+
     record.last_status = status
     record.last_error_message = message or ""
     record.last_error_code = error_code or ""
     record.attempt_count += 1
     if status == EmployeeSyncRecord.STATUS_SYNCED:
-        from django.utils import timezone
-
         record.last_synced_at = timezone.now()
+
+    history_entry = {
+        "status": status,
+        "message": message or "",
+        "error_code": error_code or "",
+        "attempt_count": record.attempt_count,
+        "attempted_at": timezone.now().isoformat(),
+    }
+    if source_payload is not None:
+        history_entry["source_payload"] = copy.deepcopy(source_payload)
+    if graph_payload is not None:
+        history_entry["graph_payload"] = copy.deepcopy(graph_payload)
+
+    history = list(record.attempt_history or [])
+    history.append(history_entry)
+    record.attempt_history = history
     record.save()
     return record
 
@@ -458,6 +544,18 @@ class MicrosoftGraphClient:
             raw = exc.read().decode("utf-8", errors="replace")
             message = self._format_graph_error(raw, exc.code)
             raise RuntimeError(message) from exc
+
+    def deactivate_user(self, email: str) -> str:
+        if not email:
+            raise ValueError("Employee email is required for Microsoft user deactivation")
+
+        existing = self.find_user(email)
+        if not existing or not existing.get("id"):
+            logger.info("Microsoft user not found for %s; nothing to deactivate", email)
+            return "not-found"
+
+        self.update_user(existing["id"], {"accountEnabled": False})
+        return "deactivated"
 
     def _format_graph_error(self, raw: str, status_code: int) -> str:
         try:
