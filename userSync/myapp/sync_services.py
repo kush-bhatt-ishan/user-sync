@@ -217,12 +217,33 @@ def _flatten_employee_payload(employee: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def get_or_create_sync_record(employee: Dict[str, Any]) -> EmployeeSyncRecord:
-    source_payload = copy.deepcopy(employee)
-    flattened_payload = _flatten_employee_payload(source_payload)
-    if isinstance(source_payload, dict):
-        for key, value in flattened_payload.items():
-            if key not in source_payload:
-                source_payload[key] = value
+    flattened_payload = _flatten_employee_payload(copy.deepcopy(employee))
+    payload_for_storage = {
+        key: value
+        for key, value in flattened_payload.items()
+        if key in {
+            "EmployeeName",
+            "EmployeeCode",
+            "FirstName",
+            "LastName",
+            "OfficialMailID",
+            "Department",
+            "DesignationName",
+            "Company",
+            "Office",
+            "City",
+            "State",
+            "Country",
+            "MobileNo",
+            "EmploymentStatus",
+            "employeeCode",
+            "firstName",
+            "lastName",
+            "email",
+            "department",
+            "designation",
+        }
+    }
     graph_payload = build_graph_payload(flattened_payload)
     source_employee_id = (
         flattened_payload.get("employeeCode")
@@ -245,7 +266,7 @@ def get_or_create_sync_record(employee: Dict[str, Any]) -> EmployeeSyncRecord:
             "last_name": last_name,
             "department": department,
             "designation": designation,
-            "payload": source_payload,
+            "payload": payload_for_storage,
             "graph_payload": graph_payload,
             "last_status": EmployeeSyncRecord.STATUS_PENDING,
             "attempt_count": 0,

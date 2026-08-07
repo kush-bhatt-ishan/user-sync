@@ -84,7 +84,7 @@ class SyncServiceTests(TestCase):
         self.assertEqual(record.graph_payload["surname"], "Smith")
         self.assertEqual(record.graph_payload["userPrincipalName"], "jane.smith@example.com")
 
-    def test_get_or_create_sync_record_preserves_full_source_payload(self):
+    def test_get_or_create_sync_record_stores_only_flat_employee_payload(self):
         employee = {
             "BasicDetails": {
                 "BasicDetail": {
@@ -126,9 +126,12 @@ class SyncServiceTests(TestCase):
 
         record = get_or_create_sync_record(employee)
 
-        self.assertIn("BasicDetails", record.payload)
-        self.assertEqual(record.payload["BasicDetails"]["BasicDetail"]["EmployeeCode"], "09607")
         self.assertEqual(record.payload["EmployeeCode"], "09607")
+        self.assertEqual(record.payload["EmployeeName"], "Zala Vishnuji Gobarsang")
+        self.assertEqual(record.payload["Department"], "SDC1")
+        self.assertNotIn("BasicDetails", record.payload)
+        self.assertNotIn("BasicDetail", record.payload)
+        self.assertNotIn("employee", record.payload)
 
     def test_get_or_create_sync_record_flattens_nested_payload(self):
         employee = {
@@ -177,8 +180,8 @@ class SyncServiceTests(TestCase):
         self.assertEqual(stored_payload["EmployeeName"], "Zala Vishnuji Gobarsang")
         self.assertEqual(stored_payload["Department"], "SDC1")
         self.assertEqual(stored_payload["email"], "")
-        self.assertIn("BasicDetails", stored_payload)
-        self.assertIn("employee", stored_payload)
+        self.assertNotIn("BasicDetails", stored_payload)
+        self.assertNotIn("employee", stored_payload)
 
     def test_find_user_uses_graph_filter_query(self):
         client = MicrosoftGraphClient()
