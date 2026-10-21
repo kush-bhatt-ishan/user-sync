@@ -34,6 +34,39 @@ def _get_setting(key: str, default: Optional[str] = None) -> Optional[str]:
     return os.getenv(key, getattr(settings, key, default))
 
 
+ALLOWED_EMPLOYMENT_STATUSES = {"active", "inactive"}
+
+
+def get_employment_status(employee: Dict[str, Any]) -> str:
+    if not isinstance(employee, dict):
+        return ""
+    flattened = _flatten_employee_payload(employee)
+    return str(flattened.get("EmploymentStatus") or "").strip()
+
+
+def check_employment_status_for_microsoft_sync(employee: Dict[str, Any]) -> tuple[bool, str, str]:
+    """
+    Check if employee's EmploymentStatus is 'Active' or 'Inactive' (case-insensitive).
+    Returns (is_allowed, raw_status, reason_message).
+    """
+    raw_status = get_employment_status(employee)
+    normalized = raw_status.lower()
+    if normalized in ALLOWED_EMPLOYMENT_STATUSES:
+        return True, raw_status, ""
+
+    if raw_status:
+        reason = (
+            f"Skipped sync to Microsoft: EmploymentStatus is '{raw_status}'. "
+            "Only records with EmploymentStatus 'Active' or 'Inactive' are updated in Microsoft."
+        )
+    else:
+        reason = (
+            "Skipped sync to Microsoft: EmploymentStatus is missing or blank. "
+            "Only records with EmploymentStatus 'Active' or 'Inactive' are updated in Microsoft."
+        )
+    return False, raw_status, reason
+
+
 GRAPH_FIELD_MAPPINGS = [
     ("accountEnabled", ["EmploymentStatus"], lambda employee, field_names: _normalize_account_enabled(_resolve_field_value(employee, field_names))),
     ("displayName", ["EmployeeName", "FirstName", "LastName", "firstName", "lastName"], lambda employee, field_names: _resolve_display_name(employee, field_names)),
@@ -292,10 +325,10 @@ def get_or_create_sync_record(employee: Dict[str, Any]) -> EmployeeSyncRecord:
         record.designation = designation
         updated_fields.append("designation")
     if not record.payload:
-        record.payload = source_payload
+        record.payload = payload_for_storage
         updated_fields.append("payload")
-    elif record.payload != source_payload:
-        record.payload = source_payload
+    elif record.payload != payload_for_storage:
+        record.payload = payload_for_storage
         record.graph_payload = graph_payload
         updated_fields.extend(["payload", "graph_payload"])
     elif not record.graph_payload:
@@ -364,6 +397,8 @@ class PeopleStrongClient:
         self.integration_name = _get_setting("PS_INTEGRATION_NAME") or ""
 
     def get_access_token(self) -> str:
+        if not self.token_url:
+            raise ValueError("PS_TOKEN_URL is missing or empty in .env configuration.")
         auth_header = base64.b64encode(f"{self.client_id}:{self.client_secret}".encode("utf-8")).decode("ascii")
         payload = parse.urlencode({"grant_type": "client_credentials"}).encode("utf-8")
         req = request.Request(
@@ -380,6 +415,8 @@ class PeopleStrongClient:
             return str(data.get("access_token") or "")
 
     def fetch_employees(self) -> List[Dict[str, Any]]:
+        if not self.api_url:
+            raise ValueError("PS_API_URL is missing or empty in .env configuration.")
         token = self.get_access_token()
         payload = {
             "integrationMasterName": self.integration_name,
@@ -599,6 +636,10 @@ class MicrosoftGraphClient:
         return f"Microsoft Graph request failed with HTTP {status_code}: {raw}"
 
     def upsert_user(self, employee: Dict[str, Any]) -> str:
+        is_allowed, raw_status, skip_reason = check_employment_status_for_microsoft_sync(employee)
+        if not is_allowed:
+            raise ValueError(skip_reason)
+
         payload = build_graph_payload(employee)
         email = payload.get("userPrincipalName") or payload.get("mail") or ""
 

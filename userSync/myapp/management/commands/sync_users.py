@@ -8,6 +8,7 @@ from myapp.sync_services import (
     MicrosoftGraphClient,
     PeopleStrongClient,
     build_graph_payload,
+    check_employment_status_for_microsoft_sync,
     create_sync_log,
     get_or_create_sync_record,
     get_retry_candidates,
@@ -236,6 +237,32 @@ class Command(BaseCommand):
     def _process_employee(self, sync_run: SyncRun, employee: Dict[str, Any]) -> None:
         record = get_or_create_sync_record(employee)
         graph_payload = build_graph_payload(record.payload or employee)
+
+        is_allowed, raw_status, skip_reason = check_employment_status_for_microsoft_sync(employee)
+        if not is_allowed:
+            update_sync_record_status(
+                record,
+                EmployeeSyncRecord.STATUS_SKIPPED,
+                message=skip_reason,
+                error_code="STATUS_NOT_MATCHED",
+                source_payload=employee,
+                graph_payload=graph_payload,
+            )
+            create_sync_log(
+                sync_run,
+                record,
+                "SKIPPED",
+                skip_reason,
+                level="WARNING",
+                error_code="STATUS_NOT_MATCHED",
+            )
+            self.stdout.write(
+                self.style.WARNING(
+                    f"SKIPPED | employee={record.source_employee_id or '-'} | email={record.email or '-'} | status=SKIPPED | reason={skip_reason}"
+                )
+            )
+            return
+
         try:
             action = self._upsert_user(record, employee)
         except Exception as exc:  # pragma: no cover - command-level safety
@@ -286,6 +313,32 @@ class Command(BaseCommand):
                 "designation": record.designation or "",
             }
         graph_payload = build_graph_payload(record.payload or employee)
+
+        is_allowed, raw_status, skip_reason = check_employment_status_for_microsoft_sync(employee)
+        if not is_allowed:
+            update_sync_record_status(
+                record,
+                EmployeeSyncRecord.STATUS_SKIPPED,
+                message=skip_reason,
+                error_code="STATUS_NOT_MATCHED",
+                source_payload=employee,
+                graph_payload=graph_payload,
+            )
+            create_sync_log(
+                sync_run,
+                record,
+                "SKIPPED",
+                skip_reason,
+                level="WARNING",
+                error_code="STATUS_NOT_MATCHED",
+            )
+            self.stdout.write(
+                self.style.WARNING(
+                    f"SKIPPED | employee={record.source_employee_id or '-'} | email={record.email or '-'} | status=SKIPPED | reason={skip_reason}"
+                )
+            )
+            return
+
         try:
             action = self._upsert_user(record, employee)
         except Exception as exc:  # pragma: no cover - command-level safety
