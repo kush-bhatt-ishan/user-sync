@@ -6,6 +6,7 @@ class EmployeeSyncRecord(models.Model):
     STATUS_PENDING = "PENDING"
     STATUS_SYNCED = "SYNCED"
     STATUS_FAILED = "FAILED"
+    STATUS_SKIPPED = "SKIPPED"
 
     source_employee_id = models.CharField(max_length=100)
     email = models.EmailField(blank=True, null=True)

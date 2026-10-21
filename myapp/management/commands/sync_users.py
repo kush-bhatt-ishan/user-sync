@@ -7,6 +7,8 @@ from myapp.models import EmployeeSyncRecord, SyncLog, SyncRun
 from myapp.sync_services import (
     MicrosoftGraphClient,
     PeopleStrongClient,
+    build_graph_payload,
+    check_employment_status_for_microsoft_sync,
     create_sync_log,
     get_or_create_sync_record,
     get_retry_candidates,
@@ -36,6 +38,12 @@ class Command(BaseCommand):
             default=None,
             help="Only sync the first N employees (omit to sync all)",
         )
+        parser.add_argument(
+            "--deactivate",
+            action="store_true",
+            dest="deactivate",
+            help="Deactivate existing Microsoft users instead of creating/updating them",
+        )
 
     def handle(self, *args, **options):
         sync_run = SyncRun.objects.create(status=SyncRun.STATUS_RUNNING)
@@ -46,6 +54,7 @@ class Command(BaseCommand):
         employee_ids = options.get("employee_ids") or []
         retry_only = options.get("retry_only")
         limit = options.get("limit")
+        deactivate = options.get("deactivate")
 
         requested_ids = []
         if employee_id:
@@ -53,6 +62,33 @@ class Command(BaseCommand):
         if employee_ids:
             requested_ids.extend(str(item).strip() for item in employee_ids if str(item).strip())
         requested_ids = [rid for rid in requested_ids if rid]
+
+        if deactivate:
+            self.stdout.write(self.style.WARNING("Deactivate mode enabled: existing Microsoft users will be disabled."))
+            records = []
+            if requested_ids:
+                normalized_ids = [str(item).strip() for item in requested_ids if str(item).strip()]
+                records = list(
+                    EmployeeSyncRecord.objects.filter(source_employee_id__in=normalized_ids).order_by("updated_at")
+                )
+            else:
+                records = list(EmployeeSyncRecord.objects.all().order_by("updated_at"))
+
+            sync_run.total_records = len(records)
+            sync_run.save(update_fields=["total_records"])
+            for record in records:
+                self._deactivate_user(sync_run, record)
+
+            sync_run.status = SyncRun.STATUS_COMPLETED
+            sync_run.finished_at = self._now()
+            sync_run.save(update_fields=["status", "finished_at"])
+            self._print_run_summary(sync_run)
+            self.stdout.write(
+                self.style.SUCCESS(
+                    f"Run completed: synced={sync_run.synced_records}, failed={sync_run.failed_records}, total={len(records)}"
+                )
+            )
+            return
 
         retry_records = []
         if retry_only:
@@ -200,10 +236,44 @@ class Command(BaseCommand):
 
     def _process_employee(self, sync_run: SyncRun, employee: Dict[str, Any]) -> None:
         record = get_or_create_sync_record(employee)
+        graph_payload = build_graph_payload(record.payload or employee)
+
+        is_allowed, raw_status, skip_reason = check_employment_status_for_microsoft_sync(employee)
+        if not is_allowed:
+            update_sync_record_status(
+                record,
+                EmployeeSyncRecord.STATUS_SKIPPED,
+                message=skip_reason,
+                error_code="STATUS_NOT_MATCHED",
+                source_payload=employee,
+                graph_payload=graph_payload,
+            )
+            create_sync_log(
+                sync_run,
+                record,
+                "SKIPPED",
+                skip_reason,
+                level="WARNING",
+                error_code="STATUS_NOT_MATCHED",
+            )
+            self.stdout.write(
+                self.style.WARNING(
+                    f"SKIPPED | employee={record.source_employee_id or '-'} | email={record.email or '-'} | status=SKIPPED | reason={skip_reason}"
+                )
+            )
+            return
+
         try:
-            self._upsert_user(record, employee)
+            action = self._upsert_user(record, employee)
         except Exception as exc:  # pragma: no cover - command-level safety
-            update_sync_record_status(record, "FAILED", message=str(exc), error_code="SYNC_FAILED")
+            update_sync_record_status(
+                record,
+                "FAILED",
+                message=str(exc),
+                error_code="SYNC_FAILED",
+                source_payload=employee,
+                graph_payload=graph_payload,
+            )
             create_sync_log(sync_run, record, "FAILED", f"Microsoft sync failed: {exc}", level="ERROR", error_code="SYNC_FAILED")
             sync_run.failed_records += 1
             sync_run.save(update_fields=["failed_records"])
@@ -214,13 +284,20 @@ class Command(BaseCommand):
                 )
             )
         else:
-            update_sync_record_status(record, "SYNCED", message="User synced successfully")
-            create_sync_log(sync_run, record, "SUCCESS", "User synced successfully to Microsoft", level="INFO")
+            success_message = "User created successfully in Microsoft" if action == "created" else "User synced successfully to Microsoft"
+            update_sync_record_status(
+                record,
+                "SYNCED",
+                message=success_message,
+                source_payload=employee,
+                graph_payload=graph_payload,
+            )
+            create_sync_log(sync_run, record, "SUCCESS", success_message, level="INFO")
             sync_run.synced_records += 1
             sync_run.save(update_fields=["synced_records"])
             self.stdout.write(
                 self.style.SUCCESS(
-                    f"SYNCED | employee={record.source_employee_id or '-'} | email={record.email or '-'} | status=SYNCED"
+                    f"SYNCED | employee={record.source_employee_id or '-'} | email={record.email or '-'} | status=SYNCED | action={action}"
                 )
             )
 
@@ -235,10 +312,44 @@ class Command(BaseCommand):
                 "department": record.department or "",
                 "designation": record.designation or "",
             }
+        graph_payload = build_graph_payload(record.payload or employee)
+
+        is_allowed, raw_status, skip_reason = check_employment_status_for_microsoft_sync(employee)
+        if not is_allowed:
+            update_sync_record_status(
+                record,
+                EmployeeSyncRecord.STATUS_SKIPPED,
+                message=skip_reason,
+                error_code="STATUS_NOT_MATCHED",
+                source_payload=employee,
+                graph_payload=graph_payload,
+            )
+            create_sync_log(
+                sync_run,
+                record,
+                "SKIPPED",
+                skip_reason,
+                level="WARNING",
+                error_code="STATUS_NOT_MATCHED",
+            )
+            self.stdout.write(
+                self.style.WARNING(
+                    f"SKIPPED | employee={record.source_employee_id or '-'} | email={record.email or '-'} | status=SKIPPED | reason={skip_reason}"
+                )
+            )
+            return
+
         try:
-            self._upsert_user(record, employee)
+            action = self._upsert_user(record, employee)
         except Exception as exc:  # pragma: no cover - command-level safety
-            update_sync_record_status(record, "FAILED", message=str(exc), error_code="RETRY_FAILED")
+            update_sync_record_status(
+                record,
+                "FAILED",
+                message=str(exc),
+                error_code="RETRY_FAILED",
+                source_payload=employee,
+                graph_payload=graph_payload,
+            )
             create_sync_log(sync_run, record, "FAILED", f"Retry failed: {exc}", level="WARNING", error_code="RETRY_FAILED")
             sync_run.failed_records += 1
             sync_run.save(update_fields=["failed_records"])
@@ -249,19 +360,51 @@ class Command(BaseCommand):
                 )
             )
         else:
-            update_sync_record_status(record, "SYNCED", message="Retry synced successfully")
-            create_sync_log(sync_run, record, "SUCCESS", "Retry synced successfully to Microsoft", level="INFO")
+            success_message = "User created successfully in Microsoft" if action == "created" else "Retry synced successfully to Microsoft"
+            update_sync_record_status(
+                record,
+                "SYNCED",
+                message=success_message,
+                source_payload=employee,
+                graph_payload=graph_payload,
+            )
+            create_sync_log(sync_run, record, "SUCCESS", success_message, level="INFO")
             sync_run.synced_records += 1
             sync_run.save(update_fields=["synced_records"])
             self.stdout.write(
                 self.style.SUCCESS(
-                    f"RETRY SYNCED | employee={record.source_employee_id or '-'} | email={record.email or '-'} | status=SYNCED"
+                    f"RETRY SYNCED | employee={record.source_employee_id or '-'} | email={record.email or '-'} | status=SYNCED | action={action}"
                 )
             )
 
-    def _upsert_user(self, record: EmployeeSyncRecord, employee: Dict[str, Any]) -> None:
+    def _upsert_user(self, record: EmployeeSyncRecord, employee: Dict[str, Any]) -> str:
         graph_client = MicrosoftGraphClient()
-        graph_client.upsert_user(employee)
+        return graph_client.upsert_user(employee)
+
+    def _deactivate_user(self, sync_run: SyncRun, record: EmployeeSyncRecord) -> None:
+        graph_client = MicrosoftGraphClient()
+        try:
+            action = graph_client.deactivate_user(record.email or "")
+        except Exception as exc:  # pragma: no cover - command-level safety
+            update_sync_record_status(record, "FAILED", message=str(exc), error_code="DEACTIVATE_FAILED")
+            create_sync_log(sync_run, record, "FAILED", f"Deactivate failed: {exc}", level="WARNING", error_code="DEACTIVATE_FAILED")
+            sync_run.failed_records += 1
+            sync_run.save(update_fields=["failed_records"])
+            self.stdout.write(
+                self.style.ERROR(
+                    f"DEACTIVATE FAILED | employee={record.source_employee_id or '-'} | email={record.email or '-'} | error={exc}"
+                )
+            )
+        else:
+            update_sync_record_status(record, "SYNCED", message="User deactivated successfully in Microsoft")
+            create_sync_log(sync_run, record, "SUCCESS", "User deactivated successfully in Microsoft", level="INFO")
+            sync_run.synced_records += 1
+            sync_run.save(update_fields=["synced_records"])
+            self.stdout.write(
+                self.style.SUCCESS(
+                    f"DEACTIVATED | employee={record.source_employee_id or '-'} | email={record.email or '-'} | status=SYNCED | action={action}"
+                )
+            )
 
     def _print_run_summary(self, sync_run: SyncRun) -> None:
         logs = list(sync_run.logs.order_by("-created_at")[:10])

@@ -4,10 +4,11 @@ from unittest.mock import Mock, patch
 from django.test import TestCase
 
 from myapp.management.commands.sync_users import Command
-from myapp.models import EmployeeSyncRecord
+from myapp.models import EmployeeSyncRecord, SyncRun
 from myapp.sync_services import (
     MicrosoftGraphClient,
     build_graph_payload,
+    check_employment_status_for_microsoft_sync,
     get_or_create_sync_record,
     get_retry_candidates,
     update_sync_record_status,
@@ -133,6 +134,30 @@ class SyncServiceTests(TestCase):
         self.assertNotIn("BasicDetail", record.payload)
         self.assertNotIn("employee", record.payload)
 
+    def test_get_or_create_sync_record_updates_existing_record_payload(self):
+        employee = {
+            "employeeCode": "E2002",
+            "firstName": "Jane",
+            "lastName": "Doe",
+            "email": "jane.doe@example.com",
+            "department": "Engineering",
+        }
+
+        record = get_or_create_sync_record(employee)
+        self.assertEqual(record.payload["department"], "Engineering")
+
+        updated_employee = {
+            "employeeCode": "E2002",
+            "firstName": "Jane",
+            "lastName": "Doe",
+            "email": "jane.doe@example.com",
+            "department": "Product",
+        }
+
+        updated_record = get_or_create_sync_record(updated_employee)
+        self.assertEqual(updated_record.id, record.id)
+        self.assertEqual(updated_record.payload["department"], "Product")
+
     def test_get_or_create_sync_record_flattens_nested_payload(self):
         employee = {
             "BasicDetails": {
@@ -230,6 +255,7 @@ class SyncServiceTests(TestCase):
             "LastName": "Doe",
             "email": "john.doe9@ishantechnologies.com",
             "employeeCode": "D1002",
+            "EmploymentStatus": "Active",
         }
 
         with patch.object(client, "find_user", return_value=None), patch.object(client, "create_user", return_value={"id": "123"}) as create_user:
@@ -367,3 +393,47 @@ class SyncServiceTests(TestCase):
         self.assertEqual(employees[0]["email"], "kapadi.mohit@ishantechnologies.com")
         self.assertEqual(employees[0]["department"], "Network Operations and Maintenance")
         self.assertEqual(employees[0]["designation"], "Specialist")
+
+    def test_check_employment_status_allows_active_and_inactive(self):
+        is_allowed, raw_status, reason = check_employment_status_for_microsoft_sync({"EmploymentStatus": "Active"})
+        self.assertTrue(is_allowed)
+        self.assertEqual(raw_status, "Active")
+        self.assertEqual(reason, "")
+
+        is_allowed, raw_status, reason = check_employment_status_for_microsoft_sync({"EmploymentStatus": "inactive"})
+        self.assertTrue(is_allowed)
+        self.assertEqual(raw_status, "inactive")
+        self.assertEqual(reason, "")
+
+    def test_check_employment_status_skips_non_matching_status_with_error_message(self):
+        is_allowed, raw_status, reason = check_employment_status_for_microsoft_sync({"EmploymentStatus": "Probation"})
+        self.assertFalse(is_allowed)
+        self.assertEqual(raw_status, "Probation")
+        self.assertIn("EmploymentStatus is 'Probation'", reason)
+        self.assertIn("Only records with EmploymentStatus 'Active' or 'Inactive' are updated in Microsoft.", reason)
+
+        is_allowed, raw_status, reason = check_employment_status_for_microsoft_sync({"EmploymentStatus": ""})
+        self.assertFalse(is_allowed)
+        self.assertEqual(raw_status, "")
+        self.assertIn("EmploymentStatus is missing or blank", reason)
+
+    def test_process_employee_skips_microsoft_upsert_when_employment_status_not_matched(self):
+        command = Command()
+        employee = {
+            "employeeCode": "E9999",
+            "firstName": "Test",
+            "lastName": "User",
+            "email": "test.user@example.com",
+            "EmploymentStatus": "Probation",
+        }
+        sync_run = SyncRun.objects.create(status=SyncRun.STATUS_RUNNING)
+
+        with patch.object(command, "_upsert_user") as mock_upsert:
+            command._process_employee(sync_run, employee)
+            mock_upsert.assert_not_called()
+
+        record = EmployeeSyncRecord.objects.get(source_employee_id="E9999")
+        self.assertEqual(record.last_status, EmployeeSyncRecord.STATUS_SKIPPED)
+        self.assertIn("EmploymentStatus is 'Probation'", record.last_error_message)
+        self.assertEqual(record.last_error_code, "STATUS_NOT_MATCHED")
+
