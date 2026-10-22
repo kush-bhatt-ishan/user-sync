@@ -1,8 +1,10 @@
 import base64
 import copy
+import importlib
 import json
 import logging
 import os
+from http import HTTPStatus
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 from urllib import error, parse, request
@@ -16,7 +18,12 @@ logger = logging.getLogger(__name__)
 
 
 def _load_env_file() -> None:
-    env_path = Path(__file__).resolve().parent.parent / ".env"
+    settings_module = importlib.import_module(settings.SETTINGS_MODULE)
+    env_paths = (
+        Path(settings.BASE_DIR) / ".env",
+        Path(settings_module.__file__).resolve().parent / ".env",
+    )
+    env_path = next((path for path in env_paths if path.exists()), env_paths[0])
     if not env_path.exists():
         return
     for line in env_path.read_text(encoding="utf-8").splitlines():
@@ -24,14 +31,20 @@ def _load_env_file() -> None:
         if not line or line.startswith("#") or "=" not in line:
             continue
         key, value = line.split("=", 1)
-        os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        if not os.environ.get(key, "").strip():
+            os.environ[key] = value
 
 
 _load_env_file()
 
 
 def _get_setting(key: str, default: Optional[str] = None) -> Optional[str]:
-    return os.getenv(key, getattr(settings, key, default))
+    value = os.getenv(key)
+    if value and value.strip():
+        return value
+    return getattr(settings, key, default)
 
 
 ALLOWED_EMPLOYMENT_STATUSES = {"active", "inactive"}
@@ -215,6 +228,12 @@ def _flatten_employee_payload(employee: Dict[str, Any]) -> Dict[str, Any]:
             "Country": basic_detail.get("Country") or basic_detail.get("country") or flattened.get("Country") or "",
             "MobileNo": basic_detail.get("MobileNo") or basic_detail.get("mobileNo") or basic_detail.get("mobilePhone") or flattened.get("MobileNo") or "",
             "EmploymentStatus": basic_detail.get("EmploymentStatus") or basic_detail.get("employmentStatus") or flattened.get("EmploymentStatus") or "",
+            "L1ManagerCode": basic_detail.get("L1ManagerCode") or basic_detail.get("l1ManagerCode") or flattened.get("L1ManagerCode") or "",
+            "L1ManagerName": basic_detail.get("L1ManagerName") or basic_detail.get("l1ManagerName") or flattened.get("L1ManagerName") or "",
+            "L1ManagerEmail": basic_detail.get("L1ManagerEmail") or basic_detail.get("l1ManagerEmail") or flattened.get("L1ManagerEmail") or "",
+            "HRManagerEmail": basic_detail.get("HRManagerEmail") or basic_detail.get("hrManagerEmail") or flattened.get("HRManagerEmail") or "",
+            "HrManagerCode": basic_detail.get("HrManagerCode") or basic_detail.get("hrManagerCode") or flattened.get("HrManagerCode") or "",
+            "HrManagerName": basic_detail.get("HrManagerName") or basic_detail.get("hrManagerName") or flattened.get("HrManagerName") or "",
             "employeeCode": basic_detail.get("EmployeeCode") or basic_detail.get("employeeCode") or flattened.get("employeeCode") or "",
             "firstName": basic_detail.get("FirstName") or basic_detail.get("firstName") or flattened.get("firstName") or "",
             "lastName": basic_detail.get("LastName") or basic_detail.get("lastName") or flattened.get("lastName") or "",
@@ -238,6 +257,12 @@ def _flatten_employee_payload(employee: Dict[str, Any]) -> Dict[str, Any]:
             "Country": direct.get("Country") or direct.get("country") or flattened.get("Country") or "",
             "MobileNo": direct.get("MobileNo") or direct.get("mobileNo") or direct.get("mobilePhone") or flattened.get("MobileNo") or "",
             "EmploymentStatus": direct.get("EmploymentStatus") or direct.get("employmentStatus") or flattened.get("EmploymentStatus") or "",
+            "L1ManagerCode": direct.get("L1ManagerCode") or direct.get("l1ManagerCode") or direct.get("managerCode") or flattened.get("L1ManagerCode") or "",
+            "L1ManagerName": direct.get("L1ManagerName") or direct.get("l1ManagerName") or direct.get("managerName") or flattened.get("L1ManagerName") or "",
+            "L1ManagerEmail": direct.get("L1ManagerEmail") or direct.get("l1ManagerEmail") or direct.get("managerEmail") or flattened.get("L1ManagerEmail") or "",
+            "HRManagerEmail": direct.get("HRManagerEmail") or direct.get("hrManagerEmail") or flattened.get("HRManagerEmail") or "",
+            "HrManagerCode": direct.get("HrManagerCode") or direct.get("hrManagerCode") or flattened.get("HrManagerCode") or "",
+            "HrManagerName": direct.get("HrManagerName") or direct.get("hrManagerName") or flattened.get("HrManagerName") or "",
             "employeeCode": direct.get("employeeCode") or direct.get("employeeId") or direct.get("employee_code") or flattened.get("employeeCode") or "",
             "firstName": direct.get("firstName") or direct.get("first_name") or flattened.get("firstName") or "",
             "lastName": direct.get("lastName") or direct.get("last_name") or flattened.get("lastName") or "",
@@ -249,8 +274,36 @@ def _flatten_employee_payload(employee: Dict[str, Any]) -> Dict[str, Any]:
     return flattened
 
 
+def get_l1_manager_details(employee: Dict[str, Any]) -> Dict[str, str]:
+    flattened = _flatten_employee_payload(copy.deepcopy(employee))
+    manager_code = (
+        flattened.get("L1ManagerCode")
+        or flattened.get("l1ManagerCode")
+        or flattened.get("managerCode")
+        or ""
+    ).strip()
+    manager_name = (
+        flattened.get("L1ManagerName")
+        or flattened.get("l1ManagerName")
+        or flattened.get("managerName")
+        or ""
+    ).strip()
+    manager_email = (
+        flattened.get("L1ManagerEmail")
+        or flattened.get("l1ManagerEmail")
+        or flattened.get("managerEmail")
+        or ""
+    ).strip()
+    return {
+        "l1_manager_code": manager_code,
+        "l1_manager_name": manager_name,
+        "l1_manager_email": manager_email,
+    }
+
+
 def get_or_create_sync_record(employee: Dict[str, Any]) -> EmployeeSyncRecord:
     flattened_payload = _flatten_employee_payload(copy.deepcopy(employee))
+    manager_details = get_l1_manager_details(employee)
     payload_for_storage = {
         key: value
         for key, value in flattened_payload.items()
@@ -275,6 +328,12 @@ def get_or_create_sync_record(employee: Dict[str, Any]) -> EmployeeSyncRecord:
             "email",
             "department",
             "designation",
+            "L1ManagerCode",
+            "L1ManagerName",
+            "L1ManagerEmail",
+            "HRManagerEmail",
+            "HrManagerCode",
+            "HrManagerName",
         }
     }
     graph_payload = build_graph_payload(flattened_payload)
@@ -290,6 +349,9 @@ def get_or_create_sync_record(employee: Dict[str, Any]) -> EmployeeSyncRecord:
     last_name = (flattened_payload.get("lastName") or flattened_payload.get("LastName") or flattened_payload.get("last_name") or "").strip()
     department = (flattened_payload.get("department") or flattened_payload.get("Department") or "").strip()
     designation = (flattened_payload.get("designation") or flattened_payload.get("DesignationName") or flattened_payload.get("jobTitle") or "").strip()
+    manager_code = manager_details["l1_manager_code"]
+    manager_name = manager_details["l1_manager_name"]
+    manager_email = manager_details["l1_manager_email"]
 
     record, created = EmployeeSyncRecord.objects.get_or_create(
         source_employee_id=source_employee_id,
@@ -299,6 +361,9 @@ def get_or_create_sync_record(employee: Dict[str, Any]) -> EmployeeSyncRecord:
             "last_name": last_name,
             "department": department,
             "designation": designation,
+            "l1_manager_code": manager_code or None,
+            "l1_manager_name": manager_name or None,
+            "l1_manager_email": manager_email or None,
             "payload": payload_for_storage,
             "graph_payload": graph_payload,
             "last_status": EmployeeSyncRecord.STATUS_PENDING,
@@ -324,6 +389,15 @@ def get_or_create_sync_record(employee: Dict[str, Any]) -> EmployeeSyncRecord:
     if not record.designation and designation:
         record.designation = designation
         updated_fields.append("designation")
+    if record.l1_manager_code != (manager_code or None):
+        record.l1_manager_code = manager_code or None
+        updated_fields.append("l1_manager_code")
+    if record.l1_manager_name != (manager_name or None):
+        record.l1_manager_name = manager_name or None
+        updated_fields.append("l1_manager_name")
+    if record.l1_manager_email != (manager_email or None):
+        record.l1_manager_email = manager_email or None
+        updated_fields.append("l1_manager_email")
     if not record.payload:
         record.payload = payload_for_storage
         updated_fields.append("payload")
@@ -524,6 +598,7 @@ class MicrosoftGraphClient:
         self.client_id = _get_setting("AZ_CLIENT_ID") or _get_setting("AZURE_CLIENT_ID") or ""
         self.client_secret = _get_setting("AZ_CLIENT_SECRET") or _get_setting("AZURE_CLIENT_SECRET") or ""
         self.temp_password = _get_setting("AZ_TEMP_PASSWORD", "TempP@ss1234!")
+        self.manager_sync_result: Dict[str, str] = {}
 
     def get_access_token(self) -> str:
         payload = parse.urlencode({
@@ -543,11 +618,14 @@ class MicrosoftGraphClient:
             return str(data.get("access_token") or "")
 
     def find_user(self, email: str) -> Optional[Dict[str, Any]]:
+        email = (email or "").strip()
+        if not email:
+            return None
+
         token = self.get_access_token()
-        encoded_email = parse.quote(email)
         filter_query = parse.quote(f"mail eq '{email}' or userPrincipalName eq '{email}'")
         req = request.Request(
-            f"https://graph.microsoft.com/v1.0/users?$filter={filter_query}&$top=1",
+            f"https://graph.microsoft.com/v1.0/users?$filter={filter_query}&$top=10",
             headers={"Authorization": f"Bearer {token}"},
             method="GET",
         )
@@ -555,12 +633,193 @@ class MicrosoftGraphClient:
             with request.urlopen(req, timeout=30) as response:
                 data = json.loads(response.read().decode("utf-8"))
                 users = data.get("value") if isinstance(data, dict) else None
-                if isinstance(users, list) and users:
+                if not isinstance(users, list):
+                    return None
+
+                exact_matches = []
+                normalized_email = email.lower()
+                for user in users:
+                    if not isinstance(user, dict):
+                        continue
+                    user_mail = str(user.get("mail") or "").strip().lower()
+                    user_upn = str(user.get("userPrincipalName") or "").strip().lower()
+                    if user_mail == normalized_email or user_upn == normalized_email:
+                        exact_matches.append(user)
+
+                if len(exact_matches) == 1:
+                    return exact_matches[0]
+                if len(exact_matches) > 1:
+                    logger.warning("Multiple Microsoft users matched email %s; skipping ambiguous lookup.", email)
+                    return None
+                if len(users) == 1:
                     return users[0]
                 return None
         except Exception:
+            logger.exception("Failed to look up Microsoft user for %s", email)
             return None
 
+    def get_user_by_email(self, email: str) -> Dict[str, Any]:
+        email = (email or "").strip()
+        if not email:
+            raise ValueError("An email address is required to look up a Microsoft Entra user.")
+
+        try:
+            token = self.get_access_token()
+        except error.HTTPError as exc:
+            raw = exc.read().decode("utf-8", errors="replace")
+            raise RuntimeError(self._format_graph_error(raw, exc.code)) from exc
+        except (error.URLError, TimeoutError) as exc:
+            raise RuntimeError(f"Could not authenticate with Microsoft Graph: {exc}") from exc
+        encoded_email = parse.quote(email, safe="@")
+        req = request.Request(
+            "https://graph.microsoft.com/v1.0/users/"
+            f"{encoded_email}?$select=id,displayName,mail,userPrincipalName",
+            headers={"Authorization": f"Bearer {token}"},
+            method="GET",
+        )
+        try:
+            with request.urlopen(req, timeout=30) as response:
+                user = json.loads(response.read().decode("utf-8"))
+        except error.HTTPError as exc:
+            raw = exc.read().decode("utf-8", errors="replace")
+            if exc.code == 404:
+                raise RuntimeError(f"No Microsoft Entra user was found for {email}.") from exc
+            raise RuntimeError(self._format_graph_error(raw, exc.code)) from exc
+        except (error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+            raise RuntimeError(f"Could not look up Microsoft Entra user {email}: {exc}") from exc
+
+        if not isinstance(user, dict) or not user.get("id"):
+            raise RuntimeError(f"Microsoft Graph returned no user details for {email}.")
+        return user
+
+    def get_user_manager(self, user_id: str) -> Optional[Dict[str, Any]]:
+        if not user_id:
+            raise ValueError("An employee Microsoft Entra object ID is required.")
+
+        try:
+            token = self.get_access_token()
+        except error.HTTPError as exc:
+            raw = exc.read().decode("utf-8", errors="replace")
+            raise RuntimeError(self._format_graph_error(raw, exc.code)) from exc
+        except (error.URLError, TimeoutError) as exc:
+            raise RuntimeError(f"Could not authenticate with Microsoft Graph: {exc}") from exc
+        req = request.Request(
+            f"https://graph.microsoft.com/v1.0/users/{parse.quote(user_id, safe='')}"
+            "?$select=id,displayName,mail,userPrincipalName",
+            headers={"Authorization": f"Bearer {token}"},
+            method="GET",
+        )
+        try:
+            with request.urlopen(req, timeout=30) as response:
+                manager = json.loads(response.read().decode("utf-8"))
+        except error.HTTPError as exc:
+            raw = exc.read().decode("utf-8", errors="replace")
+            if exc.code == 404:
+                return None
+            raise RuntimeError(self._format_graph_error(raw, exc.code)) from exc
+        except (error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+            raise RuntimeError(f"Could not verify the employee's manager: {exc}") from exc
+
+        if not isinstance(manager, dict) or not manager.get("id"):
+            return None
+        return manager
+
+    def get_user_manager_object_id(self, user_id: str) -> Optional[str]:
+        if not user_id:
+            return None
+
+        try:
+            token = self.get_access_token()
+        except error.HTTPError as exc:
+            raw = exc.read().decode("utf-8", errors="replace")
+            raise RuntimeError(self._format_graph_error(raw, exc.code)) from exc
+        except (error.URLError, TimeoutError) as exc:
+            raise RuntimeError(f"Could not authenticate with Microsoft Graph: {exc}") from exc
+        req = request.Request(
+            f"https://graph.microsoft.com/v1.0/users/{parse.quote(user_id)}/manager?$select=id",
+            headers={"Authorization": f"Bearer {token}"},
+            method="GET",
+        )
+        try:
+            with request.urlopen(req, timeout=30) as response:
+                data = json.loads(response.read().decode("utf-8"))
+                return str(data.get("id") or "").strip() or None
+        except error.HTTPError as exc:
+            if exc.code == 404:
+                return None
+            raise
+        except Exception:
+            return None
+
+    def update_user_manager(self, user_id: str, manager_object_id: str) -> bool:
+        if not user_id or not manager_object_id:
+            raise ValueError("Both employee and manager object IDs are required to update a manager relationship.")
+
+        try:
+            token = self.get_access_token()
+        except error.HTTPError as exc:
+            raw = exc.read().decode("utf-8", errors="replace")
+            raise RuntimeError(self._format_graph_error(raw, exc.code)) from exc
+        except (error.URLError, TimeoutError) as exc:
+            raise RuntimeError(f"Could not authenticate with Microsoft Graph: {exc}") from exc
+        body = json.dumps({"@odata.id": f"https://graph.microsoft.com/v1.0/users/{manager_object_id}"}).encode("utf-8")
+        req = request.Request(
+            f"https://graph.microsoft.com/v1.0/users/{parse.quote(user_id, safe='')}/manager/$ref",
+            data=body,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+            },
+            method="PUT",
+        )
+        try:
+            with request.urlopen(req, timeout=60) as response:
+                response.read()
+                if response.getcode() not in (200, 204):
+                    raise RuntimeError(
+                        f"Microsoft Graph manager update returned unexpected HTTP {response.getcode()}."
+                    )
+                return True
+        except error.HTTPError as exc:
+            raw = exc.read().decode("utf-8", errors="replace")
+            message = self._format_graph_error(raw, exc.code)
+            raise RuntimeError(message) from exc
+        except (error.URLError, TimeoutError) as exc:
+            raise RuntimeError(f"Could not update the employee's manager: {exc}") from exc
+
+    def sync_manager_for_employee(self, employee: Dict[str, Any]) -> Dict[str, str]:
+        employee_email = _resolve_string(
+            _resolve_field_value(employee, ["OfficialMailID", "email", "workEmail"])
+        )
+        manager_email = _resolve_string(
+            _resolve_field_value(employee, ["L1ManagerEmail", "l1ManagerEmail", "managerEmail"])
+        )
+
+        if not employee_email or not manager_email:
+            missing_fields = []
+            if not employee_email:
+                missing_fields.append("employee email (OfficialMailID)")
+            if not manager_email:
+                missing_fields.append("L1 manager email (L1ManagerEmail)")
+            return {"status": "skipped", "reason": f"Missing {' and '.join(missing_fields)}."}
+
+        employee_user = self.find_user(employee_email)
+        if not employee_user or not employee_user.get("id"):
+            return {"status": "not_found", "reason": f"Employee user not found for email {employee_email}."}
+
+        manager_user = self.find_user(manager_email)
+        if not manager_user or not manager_user.get("id"):
+            return {"status": "not_found", "reason": f"Manager user not found for email {manager_email}."}
+
+        if employee_user.get("id") == manager_user.get("id"):
+            return {"status": "unchanged", "reason": "Employee and manager reference the same user."}
+
+        current_manager_id = self.get_user_manager_object_id(employee_user["id"])
+        if current_manager_id == manager_user["id"]:
+            return {"status": "unchanged", "reason": "Employee manager already matches the PeopleStrong L1 manager."}
+
+        self.update_user_manager(employee_user["id"], manager_user["id"])
+        return {"status": "updated", "reason": "Employee manager relationship updated successfully."}
     def create_user(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         token = self.get_access_token()
         body = json.dumps(payload).encode("utf-8")
@@ -622,18 +881,28 @@ class MicrosoftGraphClient:
             payload = {}
 
         error_payload = payload.get("error") if isinstance(payload, dict) else None
+        try:
+            status_text = HTTPStatus(status_code).phrase
+        except ValueError:
+            status_text = "Unknown status"
         if isinstance(error_payload, dict):
             code = error_payload.get("code") or "UNKNOWN"
             message = error_payload.get("message") or "Microsoft Graph request failed"
-            if status_code == 403 and code == "Authorization_RequestDenied":
+            if status_code == 400:
+                return f"Microsoft Graph rejected the manager change (HTTP 400 Bad Request, {code}): {message}"
+            if status_code == 401:
+                return f"Microsoft Graph authentication failed (HTTP 401 Unauthorized, {code}): {message}"
+            if status_code == 403:
                 return (
-                    f"Microsoft Graph permission denied ({code}): {message}. "
+                    f"Microsoft Graph permission denied (HTTP 403 Forbidden, {code}): {message}. "
                     "Grant the app the User.ReadWrite.All (and Directory.ReadWrite.All if needed) permission "
                     "and ensure admin consent is completed."
                 )
-            return f"Microsoft Graph error ({code}): {message}"
+            if status_code == 404:
+                return f"Microsoft Graph user or manager was not found (HTTP 404 Not Found, {code}): {message}"
+            return f"Microsoft Graph error (HTTP {status_code} {status_text}, {code}): {message}"
 
-        return f"Microsoft Graph request failed with HTTP {status_code}: {raw}"
+        return f"Microsoft Graph request failed with HTTP {status_code} {status_text}: {raw}"
 
     def upsert_user(self, employee: Dict[str, Any]) -> str:
         is_allowed, raw_status, skip_reason = check_employment_status_for_microsoft_sync(employee)
@@ -651,18 +920,27 @@ class MicrosoftGraphClient:
             logger.info("Microsoft user already exists for %s; updating", email)
             update_payload = {
                 key: value for key, value in payload.items()
-                # if key in {"accountEnabled", "displayName", "givenName", "surname", "jobTitle", "department", "companyName", "employeeId", "officeLocation", "city", "state", "country", "mobilePhone"}
                 if key in {"accountEnabled", "jobTitle", "department", "companyName", "employeeId", "officeLocation", "city", "state", "country", "mobilePhone"}
             }
             self.update_user(existing["id"], update_payload)
-            return "updated"
+            action = "updated"
+        else:
+            logger.info("Microsoft user not found for %s; creating", email)
+            create_payload = dict(payload)
+            create_payload.pop("mail", None)
+            create_payload["passwordProfile"] = {
+                "forceChangePasswordNextSignIn": True,
+                "password": self.temp_password,
+            }
+            self.create_user(create_payload)
+            action = "created"
 
-        logger.info("Microsoft user not found for %s; creating", email)
-        create_payload = dict(payload)
-        create_payload.pop("mail", None)
-        create_payload["passwordProfile"] = {
-            "forceChangePasswordNextSignIn": True,
-            "password": self.temp_password,
-        }
-        self.create_user(create_payload)
-        return "created"
+        try:
+            result = self.sync_manager_for_employee(employee)
+            self.manager_sync_result = result
+            logger.info("Manager sync result for %s: %s (%s)", email, result["status"], result["reason"])
+        except Exception as exc:  # pragma: no cover - manager sync should not block employee sync
+            self.manager_sync_result = {"status": "failed", "reason": str(exc)}
+            logger.warning("Manager sync failed for employee %s: %s", email, exc)
+
+        return action

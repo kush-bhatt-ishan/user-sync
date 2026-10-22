@@ -1,0 +1,382 @@
+{
+	"info": {
+		"_postman_id": "c1f72b9a-4e20-4e56-91e0-user-sync-entra-id",
+		"name": "User Sync - Microsoft Graph & PeopleStrong API Collection",
+		"description": "API collection used in user-sync to authenticate, fetch employees from PeopleStrong, and Create, Update, Search, and Deactivate users in Microsoft Entra ID (Azure AD) via Microsoft Graph API.",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"variable": [
+		{
+			"key": "AZ_TENANT_ID",
+			"value": "your-azure-tenant-id",
+			"type": "string"
+		},
+		{
+			"key": "AZ_CLIENT_ID",
+			"value": "your-azure-client-id",
+			"type": "string"
+		},
+		{
+			"key": "AZ_CLIENT_SECRET",
+			"value": "your-azure-client-secret",
+			"type": "string"
+		},
+		{
+			"key": "GRAPH_ACCESS_TOKEN",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "USER_ID_OR_UPN",
+			"value": "john.doe@yourdomain.com",
+			"type": "string"
+		},
+		{
+			"key": "PS_TOKEN_URL",
+			"value": "https://auth.peoplestrong.com/auth/realms/1454/protocol/openid-connect/token",
+			"type": "string"
+		},
+		{
+			"key": "PS_API_URL",
+			"value": "https://api.peoplestrong.com/api/integration/Outbound/IshanInfotechLimited_HRIS_EmployeedataD365",
+			"type": "string"
+		},
+		{
+			"key": "PS_CLIENT_ID",
+			"value": "your-peoplestrong-client-id",
+			"type": "string"
+		},
+		{
+			"key": "PS_CLIENT_SECRET",
+			"value": "your-peoplestrong-client-secret",
+			"type": "string"
+		},
+		{
+			"key": "PS_APIKEY",
+			"value": "your-peoplestrong-api-key",
+			"type": "string"
+		},
+		{
+			"key": "PS_ACCESS_TOKEN",
+			"value": "",
+			"type": "string"
+		}
+	],
+	"item": [
+		{
+			"name": "1. Microsoft Entra ID (Graph API)",
+			"item": [
+				{
+					"name": "1.1 Get Microsoft Graph Access Token",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"var jsonData = pm.response.json();",
+									"if (jsonData.access_token) {",
+									"    pm.collectionVariables.set('GRAPH_ACCESS_TOKEN', jsonData.access_token);",
+									"    console.log('Graph Access Token updated in collection variable.');",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/x-www-form-urlencoded"
+							}
+						],
+						"body": {
+							"mode": "urlencoded",
+							"urlencoded": [
+								{
+									"key": "grant_type",
+									"value": "client_credentials",
+									"type": "text"
+								},
+								{
+									"key": "client_id",
+									"value": "{{AZ_CLIENT_ID}}",
+									"type": "text"
+								},
+								{
+									"key": "client_secret",
+									"value": "{{AZ_CLIENT_SECRET}}",
+									"type": "text"
+								},
+								{
+									"key": "scope",
+									"value": "https://graph.microsoft.com/.default",
+									"type": "text"
+								}
+							]
+						},
+						"url": {
+							"raw": "https://login.microsoftonline.com/{{AZ_TENANT_ID}}/oauth2/v2.0/token",
+							"protocol": "https",
+							"host": [
+								"login",
+								"microsoftonline",
+								"com"
+							],
+							"path": [
+								"{{AZ_TENANT_ID}}",
+								"oauth2",
+								"v2.0",
+								"token"
+							]
+						},
+						"description": "Obtains an OAuth 2.0 access token using client credentials flow to call Microsoft Graph API."
+					},
+					"response": []
+				},
+				{
+					"name": "1.2 Find User (by Email or UPN)",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{GRAPH_ACCESS_TOKEN}}"
+							}
+						],
+						"url": {
+							"raw": "https://graph.microsoft.com/v1.0/users?$filter=mail eq '{{USER_ID_OR_UPN}}' or userPrincipalName eq '{{USER_ID_OR_UPN}}'&$top=1",
+							"protocol": "https",
+							"host": [
+								"graph",
+								"microsoft",
+								"com"
+							],
+							"path": [
+								"v1.0",
+								"users"
+							],
+							"query": [
+								{
+									"key": "$filter",
+									"value": "mail eq '{{USER_ID_OR_UPN}}' or userPrincipalName eq '{{USER_ID_OR_UPN}}'"
+								},
+								{
+									"key": "$top",
+									"value": "1"
+								}
+							]
+						},
+						"description": "Checks if the user already exists in Microsoft Entra ID."
+					},
+					"response": []
+				},
+				{
+					"name": "1.3 Create User",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{GRAPH_ACCESS_TOKEN}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"accountEnabled\": true,\n  \"displayName\": \"John Doe\",\n  \"givenName\": \"John\",\n  \"surname\": \"Doe\",\n  \"userPrincipalName\": \"john.doe@yourdomain.com\",\n  \"mailNickname\": \"john.doe\",\n  \"jobTitle\": \"Software Engineer\",\n  \"department\": \"Engineering\",\n  \"companyName\": \"Ishan Technologies\",\n  \"officeLocation\": \"HQ\",\n  \"city\": \"Ahmedabad\",\n  \"state\": \"Gujarat\",\n  \"country\": \"India\",\n  \"employeeId\": \"E1001\",\n  \"mobilePhone\": \"+919876543210\",\n  \"passwordProfile\": {\n    \"forceChangePasswordNextSignIn\": true,\n    \"password\": \"TempP@ss1234!\"\n  }\n}"
+						},
+						"url": {
+							"raw": "https://graph.microsoft.com/v1.0/users",
+							"protocol": "https",
+							"host": [
+								"graph",
+								"microsoft",
+								"com"
+							],
+							"path": [
+								"v1.0",
+								"users"
+							]
+						},
+						"description": "Creates a new user account in Microsoft Entra ID."
+					},
+					"response": []
+				},
+				{
+					"name": "1.4 Update User",
+					"request": {
+						"method": "PATCH",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{GRAPH_ACCESS_TOKEN}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"accountEnabled\": true,\n  \"jobTitle\": \"Senior Software Engineer\",\n  \"department\": \"Engineering\",\n  \"companyName\": \"Ishan Technologies\",\n  \"officeLocation\": \"HQ\",\n  \"city\": \"Ahmedabad\",\n  \"state\": \"Gujarat\",\n  \"country\": \"India\",\n  \"employeeId\": \"E1001\",\n  \"mobilePhone\": \"+919876543210\"\n}"
+						},
+						"url": {
+							"raw": "https://graph.microsoft.com/v1.0/users/{{USER_ID_OR_UPN}}",
+							"protocol": "https",
+							"host": [
+								"graph",
+								"microsoft",
+								"com"
+							],
+							"path": [
+								"v1.0",
+								"users",
+								"{{USER_ID_OR_UPN}}"
+							]
+						},
+						"description": "Updates profile attributes of an existing user in Microsoft Entra ID. Target can be the user object ID or userPrincipalName."
+					},
+					"response": []
+				},
+				{
+					"name": "1.5 Deactivate User",
+					"request": {
+						"method": "PATCH",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{GRAPH_ACCESS_TOKEN}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"accountEnabled\": false\n}"
+						},
+						"url": {
+							"raw": "https://graph.microsoft.com/v1.0/users/{{USER_ID_OR_UPN}}",
+							"protocol": "https",
+							"host": [
+								"graph",
+								"microsoft",
+								"com"
+							],
+							"path": [
+								"v1.0",
+								"users",
+								"{{USER_ID_OR_UPN}}"
+							]
+						},
+						"description": "Deactivates/disables a user account in Microsoft Entra ID by setting accountEnabled to false."
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "2. PeopleStrong HRIS API",
+			"item": [
+				{
+					"name": "2.1 Get PeopleStrong Access Token",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"var jsonData = pm.response.json();",
+									"if (jsonData.access_token) {",
+									"    pm.collectionVariables.set('PS_ACCESS_TOKEN', jsonData.access_token);",
+									"    console.log('PeopleStrong Access Token saved.');",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"auth": {
+							"type": "basic",
+							"basic": [
+								{
+									"key": "username",
+									"value": "{{PS_CLIENT_ID}}",
+									"type": "string"
+								},
+								{
+									"key": "password",
+									"value": "{{PS_CLIENT_SECRET}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/x-www-form-urlencoded"
+							}
+						],
+						"body": {
+							"mode": "urlencoded",
+							"urlencoded": [
+								{
+									"key": "grant_type",
+									"value": "client_credentials",
+									"type": "text"
+								}
+							]
+						},
+						"url": {
+							"raw": "{{PS_TOKEN_URL}}",
+							"host": [
+								"{{PS_TOKEN_URL}}"
+							]
+						},
+						"description": "Fetches OAuth 2.0 access token for PeopleStrong HRIS using Basic Auth client credentials."
+					},
+					"response": []
+				},
+				{
+					"name": "2.2 Fetch Outbound Employee Records",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "apikey",
+								"value": "{{PS_APIKEY}}"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{PS_ACCESS_TOKEN}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"integrationMasterName\": \"EmployeedataD365\",\n  \"pageNo\": 1,\n  \"pageSize\": 1000\n}"
+						},
+						"url": {
+							"raw": "{{PS_API_URL}}",
+							"host": [
+								"{{PS_API_URL}}"
+							]
+						},
+						"description": "Fetches raw employee records from PeopleStrong outbound integration endpoint."
+					},
+					"response": []
+				}
+			]
+		}
+	]
+}
