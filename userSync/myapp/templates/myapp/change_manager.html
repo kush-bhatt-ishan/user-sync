@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Change L1 manager</title>
+    <style>
+        body { font: 16px/1.5 system-ui, sans-serif; margin: 2rem auto; max-width: 760px; padding: 0 1rem; color: #17202a; }
+        label { display: block; font-weight: 600; margin: 1rem 0 .35rem; }
+        input, select, button { box-sizing: border-box; font: inherit; padding: .6rem; }
+        input, select { width: 100%; }
+        button { margin: 1rem .5rem 0 0; cursor: pointer; }
+        .notice { border: 1px solid; border-radius: .35rem; margin: 1rem 0; padding: .8rem 1rem; }
+        .error { background: #fff0f0; border-color: #b42318; }
+        .success { background: #effaf2; border-color: #16803c; }
+        .preview { background: #f3f6fa; border-color: #7b8794; }
+        dl { display: grid; grid-template-columns: 12rem 1fr; gap: .35rem 1rem; }
+        dt { font-weight: 600; }
+        dd { margin: 0; overflow-wrap: anywhere; }
+    </style>
+</head>
+<body>
+    <main>
+        <p><a href="{% url 'index' %}">Home</a></p>
+        <h1>Change an employee's L1 manager</h1>
+        <p>Select a synced employee, look up the proposed manager in Microsoft Entra, review the details, then confirm the change.</p>
+
+        {% if error %}
+            <div class="notice error" role="alert"><strong>Manager change not completed:</strong> {{ error }}</div>
+        {% endif %}
+
+        {% if success %}
+            <div class="notice success" role="status">
+                <strong>Manager change completed and verified.</strong>
+                <p>Sync run {{ success.sync_run_id }}</p>
+                <dl>
+                    <dt>Employee</dt>
+                    <dd>{{ success.employee.displayName }} ({{ success.employee.mail|default:success.employee.userPrincipalName }})</dd>
+                    <dt>New manager</dt>
+                    <dd>{{ success.manager.displayName }} ({{ success.manager.mail|default:success.manager.userPrincipalName }})</dd>
+                </dl>
+            </div>
+        {% endif %}
+
+        <form method="post">
+            {% csrf_token %}
+            <label for="employee_id">Employee</label>
+            <select id="employee_id" name="employee_id" required>
+                <option value="">Select a synced employee</option>
+                {% for employee in employees %}
+                    <option value="{{ employee.pk }}" {% if selected_employee_id == employee.pk|stringformat:"s" %}selected{% endif %}>
+                        {{ employee.source_employee_id }} — {{ employee.email }}
+                    </option>
+                {% endfor %}
+            </select>
+
+            <label for="manager_email">New L1 manager email</label>
+            <input id="manager_email" name="manager_email" type="email" value="{{ manager_email }}" required>
+            <button type="submit" name="action" value="preview">Look up manager</button>
+        </form>
+
+        {% if employee_preview and manager_preview %}
+            <section class="notice preview" aria-labelledby="preview-heading">
+                <h2 id="preview-heading">Review before changing</h2>
+                <dl>
+                    <dt>Employee</dt>
+                    <dd>{{ employee_preview.displayName }} ({{ employee_preview.mail|default:employee_preview.userPrincipalName }})</dd>
+                    <dt>Employee object ID</dt>
+                    <dd>{{ employee_preview.id }}</dd>
+                    <dt>New manager</dt>
+                    <dd>{{ manager_preview.displayName }} ({{ manager_preview.mail|default:manager_preview.userPrincipalName }})</dd>
+                    <dt>Manager object ID</dt>
+                    <dd>{{ manager_preview.id }}</dd>
+                </dl>
+                <form method="post">
+                    {% csrf_token %}
+                    <input type="hidden" name="employee_id" value="{{ selected_employee_id }}">
+                    <input type="hidden" name="manager_email" value="{{ manager_email }}">
+                    <input type="hidden" name="expected_employee_oid" value="{{ employee_preview.id }}">
+                    <input type="hidden" name="expected_manager_oid" value="{{ manager_preview.id }}">
+                    <button type="submit" name="action" value="change">Change Manager</button>
+                </form>
+            </section>
+        {% endif %}
+    </main>
+</body>
+</html>

@@ -1,7 +1,11 @@
 import io
+import json
+from urllib.error import HTTPError
 from unittest.mock import Mock, patch
 
+from django.contrib.auth import get_user_model
 from django.test import TestCase
+from django.urls import reverse
 
 from myapp.management.commands.sync_users import Command
 from myapp.models import EmployeeSyncRecord, SyncRun
@@ -221,6 +225,208 @@ class SyncServiceTests(TestCase):
         self.assertEqual(found["id"], "123")
         self.assertIn("users?$filter=", urlopen.call_args.args[0].full_url)
 
+    def test_get_user_by_email_uses_graph_user_resource_endpoint(self):
+        client = MicrosoftGraphClient()
+        response = Mock()
+        response.__enter__ = Mock(return_value=response)
+        response.__exit__ = Mock(return_value=False)
+        response.read.return_value = (
+            b'{"id":"manager-oid","displayName":"Manager Name",'
+            b'"mail":"manager@example.com","userPrincipalName":"manager@example.com"}'
+        )
+
+        with patch.object(client, "get_access_token", return_value="access-token"), patch(
+            "myapp.sync_services.request.urlopen", return_value=response
+        ) as urlopen:
+            manager = client.get_user_by_email("manager@example.com")
+
+        request = urlopen.call_args.args[0]
+        self.assertIn(
+            "/users/manager@example.com?$select=id,displayName,mail,userPrincipalName",
+            request.full_url,
+        )
+        self.assertEqual(request.get_header("Authorization"), "Bearer access-token")
+        self.assertEqual(manager["id"], "manager-oid")
+
+    def test_get_user_by_email_reports_graph_http_errors(self):
+        client = MicrosoftGraphClient()
+        graph_error = b'{"error":{"code":"Authorization_RequestDenied","message":"Denied"}}'
+        http_error = HTTPError(
+            "https://graph.microsoft.com/v1.0/users/manager%40example.com",
+            403,
+            "Forbidden",
+            {},
+            io.BytesIO(graph_error),
+        )
+
+        with patch.object(client, "get_access_token", return_value="access-token"), patch(
+            "myapp.sync_services.request.urlopen", side_effect=http_error
+        ), self.assertRaisesRegex(RuntimeError, "HTTP 403 Forbidden"):
+            client.get_user_by_email("manager@example.com")
+
+    def test_graph_error_messages_cover_manager_change_status_codes(self):
+        client = MicrosoftGraphClient()
+        response_body = '{"error":{"code":"RequestFailed","message":"Request failed"}}'
+        expected_messages = {
+            400: "HTTP 400 Bad Request",
+            401: "HTTP 401 Unauthorized",
+            403: "HTTP 403 Forbidden",
+            404: "HTTP 404 Not Found",
+        }
+
+        for status_code, expected_message in expected_messages.items():
+            with self.subTest(status_code=status_code):
+                message = client._format_graph_error(response_body, status_code)
+                self.assertIn(expected_message, message)
+
+    def test_get_user_by_email_reports_not_found_without_a_user_fallback(self):
+        client = MicrosoftGraphClient()
+        http_error = HTTPError(
+            "https://graph.microsoft.com/v1.0/users/missing@example.com",
+            404,
+            "Not Found",
+            {},
+            io.BytesIO(b'{"error":{"code":"Request_ResourceNotFound","message":"Not found"}}'),
+        )
+
+        with patch.object(client, "get_access_token", return_value="access-token"), patch(
+            "myapp.sync_services.request.urlopen", side_effect=http_error
+        ), self.assertRaisesRegex(RuntimeError, "No Microsoft Entra user was found"):
+            client.get_user_by_email("missing@example.com")
+
+    def test_update_user_manager_accepts_no_content_and_sends_reference(self):
+        client = MicrosoftGraphClient()
+        response = Mock()
+        response.__enter__ = Mock(return_value=response)
+        response.__exit__ = Mock(return_value=False)
+        response.getcode.return_value = 204
+
+        with patch.object(client, "get_access_token", return_value="access-token"), patch(
+            "myapp.sync_services.request.urlopen", return_value=response
+        ) as urlopen:
+            updated = client.update_user_manager("employee-oid", "manager-oid")
+
+        request = urlopen.call_args.args[0]
+        self.assertEqual(request.get_method(), "PUT")
+        self.assertEqual(
+            request.full_url,
+            "https://graph.microsoft.com/v1.0/users/employee-oid/manager/$ref",
+        )
+        self.assertEqual(
+            json.loads(request.data),
+            {"@odata.id": "https://graph.microsoft.com/v1.0/users/manager-oid"},
+        )
+        self.assertTrue(updated)
+
+    def test_manager_change_page_requires_staff_login(self):
+        response = self.client.get(reverse("change-l1-manager"))
+
+        self.assertEqual(response.status_code, 302)
+        self.assertIn("/admin/login/", response.url)
+
+    def test_manager_change_workflow_updates_verifies_and_persists(self):
+        record = EmployeeSyncRecord.objects.create(
+            source_employee_id="E4001",
+            email="employee@example.com",
+        )
+        staff_user = get_user_model().objects.create_user(
+            username="manager-admin",
+            password="test-password",
+            is_staff=True,
+        )
+        self.client.force_login(staff_user)
+        employee_user = {
+            "id": "employee-oid",
+            "displayName": "Employee Name",
+            "mail": "employee@example.com",
+            "userPrincipalName": "employee@example.com",
+        }
+        manager_user = {
+            "id": "manager-oid",
+            "displayName": "Manager Name",
+            "mail": "manager@example.com",
+            "userPrincipalName": "manager@example.com",
+        }
+
+        with patch("myapp.views.MicrosoftGraphClient") as graph_client_class:
+            graph_client = graph_client_class.return_value
+            graph_client.get_user_by_email.side_effect = [employee_user, manager_user]
+            graph_client.update_user_manager.return_value = True
+            graph_client.get_user_manager.return_value = manager_user
+
+            preview = self.client.post(
+                reverse("change-l1-manager"),
+                {
+                    "employee_id": record.pk,
+                    "manager_email": "manager@example.com",
+                    "action": "preview",
+                },
+            )
+            self.assertEqual(preview.status_code, 200)
+            self.assertContains(preview, "Manager Name")
+            graph_client.update_user_manager.assert_not_called()
+
+            graph_client.get_user_by_email.side_effect = [employee_user, manager_user]
+            changed = self.client.post(
+                reverse("change-l1-manager"),
+                {
+                    "employee_id": record.pk,
+                    "manager_email": "manager@example.com",
+                    "expected_employee_oid": "employee-oid",
+                    "expected_manager_oid": "manager-oid",
+                    "action": "change",
+                },
+            )
+
+        self.assertEqual(changed.status_code, 200)
+        self.assertContains(changed, "Manager change completed and verified")
+        graph_client.update_user_manager.assert_called_once_with("employee-oid", "manager-oid")
+        graph_client.get_user_manager.assert_called_once_with("employee-oid")
+        record.refresh_from_db()
+        self.assertEqual(record.l1_manager_email, "manager@example.com")
+        self.assertEqual(record.l1_manager_name, "Manager Name")
+        self.assertEqual(record.l1_manager_object_id, "manager-oid")
+        self.assertEqual(record.manager_sync_status, "UPDATED")
+        self.assertEqual(SyncRun.objects.filter(status=SyncRun.STATUS_COMPLETED).count(), 1)
+
+    def test_manager_change_does_not_update_when_manager_is_not_found(self):
+        record = EmployeeSyncRecord.objects.create(
+            source_employee_id="E4002",
+            email="employee@example.com",
+        )
+        staff_user = get_user_model().objects.create_user(
+            username="manager-admin-not-found",
+            password="test-password",
+            is_staff=True,
+        )
+        self.client.force_login(staff_user)
+        employee_user = {
+            "id": "employee-oid",
+            "displayName": "Employee Name",
+            "mail": "employee@example.com",
+            "userPrincipalName": "employee@example.com",
+        }
+
+        with patch("myapp.views.MicrosoftGraphClient") as graph_client_class:
+            graph_client = graph_client_class.return_value
+            graph_client.get_user_by_email.side_effect = [
+                employee_user,
+                RuntimeError("No Microsoft Entra user was found for missing@example.com."),
+            ]
+            response = self.client.post(
+                reverse("change-l1-manager"),
+                {
+                    "employee_id": record.pk,
+                    "manager_email": "missing@example.com",
+                    "action": "preview",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "No Microsoft Entra user was found")
+        graph_client.update_user_manager.assert_not_called()
+        self.assertEqual(SyncRun.objects.count(), 0)
+
     def test_upsert_user_omits_unsupported_mail_property_on_create(self):
         client = MicrosoftGraphClient()
         employee = {
@@ -265,6 +471,28 @@ class SyncServiceTests(TestCase):
         self.assertEqual(payload["companyName"], "Ishan Technologies")
         self.assertEqual(payload["mailNickname"], "john.doe9")
         self.assertEqual(payload["userPrincipalName"], "john.doe9@ishantechnologies.com")
+
+    def test_command_persists_manager_sync_result(self):
+        record = EmployeeSyncRecord.objects.create(source_employee_id="E3010", email="employee@example.com")
+        command = Command()
+        graph_client = Mock()
+        graph_client.upsert_user.return_value = "updated"
+        graph_client.manager_sync_result = {
+            "status": "updated",
+            "reason": "Employee manager relationship updated successfully.",
+        }
+
+        with patch("myapp.management.commands.sync_users.MicrosoftGraphClient", return_value=graph_client):
+            action = command._upsert_user(record, {"email": "employee@example.com"})
+
+        record.refresh_from_db()
+        self.assertEqual(action, "updated")
+        self.assertEqual(record.manager_sync_status, "UPDATED")
+        self.assertEqual(
+            record.manager_error_message,
+            "Employee manager relationship updated successfully.",
+        )
+        self.assertIsNotNone(record.manager_last_synced_at)
 
     def test_update_sync_record_status_records_attempt_history(self):
         record = EmployeeSyncRecord.objects.create(source_employee_id="E3001", email="jane.doe@example.com")
@@ -333,6 +561,34 @@ class SyncServiceTests(TestCase):
             command.handle(limit=1)
 
         self.assertEqual(process_employee.call_count, 1)
+
+    def test_sync_run_stores_run_and_employee_detail_logs(self):
+        command = Command()
+        command.stdout = io.StringIO()
+        command.stderr = io.StringIO()
+        employee = {
+            "employeeCode": "E1010",
+            "email": "employee@example.com",
+            "EmploymentStatus": "Active",
+            "L1ManagerEmail": "manager@example.com",
+        }
+
+        with patch.object(command, "_fetch_people_strong_employees", return_value=[employee]), patch.object(
+            command, "_upsert_user", return_value="updated"
+        ):
+            command.handle()
+
+        sync_run = SyncRun.objects.latest("id")
+        logs = list(sync_run.logs.order_by("created_at"))
+        self.assertEqual(sync_run.total_records, 1)
+        self.assertEqual(len(logs), 4)
+        self.assertEqual(logs[0].status, "STARTED")
+        self.assertIn("Fetched 1 employees", logs[1].message)
+        self.assertEqual(logs[2].source_employee_id, "E1010")
+        self.assertIn("employee@example.com", logs[2].message)
+        self.assertIn("l1_manager_email=manager@example.com", logs[2].message)
+        self.assertIn("action=updated", logs[2].message)
+        self.assertIn("Run finished; status=COMPLETED; total=1; synced=1; failed=0", logs[3].message)
 
     def test_deactivate_mode_calls_graph_client_with_email(self):
         record = EmployeeSyncRecord.objects.create(source_employee_id="E1001", email="john.doe@example.com")
@@ -417,6 +673,65 @@ class SyncServiceTests(TestCase):
         self.assertEqual(raw_status, "")
         self.assertIn("EmploymentStatus is missing or blank", reason)
 
+    def test_get_or_create_sync_record_stores_l1_manager_fields(self):
+        employee = {
+            "BasicDetails": {
+                "BasicDetail": {
+                    "EmployeeCode": "10967",
+                    "EmployeeName": "Shaikh Mohammadnadim A. SHAIKH",
+                    "OfficialMailID": "shaikh.nadim@ishantechnologies.com",
+                    "EmploymentStatus": "Active",
+                    "L1ManagerCode": "06823",
+                    "L1ManagerName": "Dharmesh Thakorbhai Lad",
+                    "L1ManagerEmail": "lad.dharmesh@ishantechnologies.com",
+                    "HRManagerEmail": "achhava.arif@ishantechnologies.com",
+                    "HrManagerCode": "06648",
+                    "HrManagerName": "Arif Idrishbhai Achhava",
+                }
+            }
+        }
+
+        record = get_or_create_sync_record(employee)
+
+        self.assertEqual(record.l1_manager_code, "06823")
+        self.assertEqual(record.l1_manager_name, "Dharmesh Thakorbhai Lad")
+        self.assertEqual(record.l1_manager_email, "lad.dharmesh@ishantechnologies.com")
+        self.assertIn("L1ManagerEmail", record.payload)
+        self.assertEqual(record.payload["L1ManagerEmail"], "lad.dharmesh@ishantechnologies.com")
+
+    def test_manager_sync_reads_nested_peoplestrong_email_fields(self):
+        from myapp.sync_services import PeopleStrongClient
+
+        employee = PeopleStrongClient()._normalize_employee(
+            {
+                "BasicDetails": {
+                    "BasicDetail": {
+                        "EmployeeCode": "E4010",
+                        "OfficialMailID": "employee@example.com",
+                        "EmploymentStatus": "Active",
+                        "L1ManagerEmail": "manager@example.com",
+                    }
+                }
+            }
+        )
+        client = MicrosoftGraphClient()
+        employee_user = {"id": "employee-oid"}
+        manager_user = {"id": "manager-oid"}
+
+        with patch.object(
+            client, "find_user", side_effect=[employee_user, manager_user]
+        ) as find_user, patch.object(
+            client, "get_user_manager_object_id", return_value=None
+        ), patch.object(client, "update_user_manager", return_value=True) as update_manager:
+            result = client.sync_manager_for_employee(employee)
+
+        self.assertEqual(result["status"], "updated")
+        self.assertEqual(
+            [call.args[0] for call in find_user.call_args_list],
+            ["employee@example.com", "manager@example.com"],
+        )
+        update_manager.assert_called_once_with("employee-oid", "manager-oid")
+
     def test_process_employee_skips_microsoft_upsert_when_employment_status_not_matched(self):
         command = Command()
         employee = {
@@ -436,4 +751,3 @@ class SyncServiceTests(TestCase):
         self.assertEqual(record.last_status, EmployeeSyncRecord.STATUS_SKIPPED)
         self.assertIn("EmploymentStatus is 'Probation'", record.last_error_message)
         self.assertEqual(record.last_error_code, "STATUS_NOT_MATCHED")
-
