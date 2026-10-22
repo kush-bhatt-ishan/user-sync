@@ -13,7 +13,8 @@
 6. [Complete Command Reference](#complete-command-reference)
 7. [Database Models & Logging](#database-models--logging)
 8. [Testing & Verification](#testing--verification)
-9. [Troubleshooting & Common Issues](#troubleshooting--common-issues)
+9. [Manually Change an L1 Manager](#manually-change-an-l1-manager)
+10. [Troubleshooting & Common Issues](#troubleshooting--common-issues)
 
 ---
 
@@ -135,6 +136,22 @@ To run the sync service for all employees:
 ```powershell
 python manage.py sync_users
 ```
+
+---
+
+## Manually Change an L1 Manager
+
+Sign in to Django as a staff user and open:
+
+```text
+http://127.0.0.1:8000/change-manager/
+```
+
+Select a previously synced employee and enter the new manager's email. Choose **Look up manager** to fetch and review both Entra accounts. Choose **Change Manager** only after reviewing the employee and manager object IDs. The application updates the Graph relationship, fetches the assigned manager to verify it, saves the verified manager details on `EmployeeSyncRecord`, and records the result in `SyncRun` and `SyncLog`.
+
+The page requires the existing Microsoft Graph application credentials and permissions. The app registration needs permission to read users and update manager relationships, typically `User.ReadWrite.All` with admin consent. Graph errors such as 400, 401, 403, and 404 are shown on the page and written to the sync audit log.
+
+This is a direct Entra change. If PeopleStrong continues to send a different `L1ManagerEmail`, a later employee sync may set the relationship back to the PeopleStrong value; update the source record if the change should persist across sync runs.
 
 ---
 
@@ -339,4 +356,3 @@ sudo systemctl enable --now user-sync-web
    - **Add arguments**: `manage.py sync_users`
    - **Start in**: `C:\user-sync`
 5. Save the task and enable **Run whether user is logged on or not**.
-
