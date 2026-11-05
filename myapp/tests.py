@@ -8,7 +8,7 @@ from django.test import TestCase
 from django.urls import reverse
 
 from myapp.management.commands.sync_users import Command
-from myapp.models import EmployeeSyncRecord, SyncRun
+from myapp.models import EmployeeSyncRecord, SyncLog, SyncRun
 from myapp.sync_services import (
     MicrosoftGraphClient,
     build_graph_payload,
@@ -20,6 +20,164 @@ from myapp.sync_services import (
 
 
 class SyncServiceTests(TestCase):
+    def test_dashboard_requires_staff_access(self):
+        response = self.client.get(reverse("index"))
+
+        self.assertEqual(response.status_code, 302)
+        self.assertIn("/admin/login/", response.url)
+
+    def test_dashboard_shows_unique_employee_and_separate_audit_logs(self):
+        record = EmployeeSyncRecord.objects.create(
+            source_employee_id="E5001",
+            email="sam.lee@example.com",
+            first_name="Sam",
+            last_name="Lee",
+            department="Engineering",
+            designation="Analyst",
+            payload={
+                "EmploymentStatus": "Active",
+                "Company": "Ishan Technologies",
+                "City": "Ahmedabad",
+                "MobileNo": "9876543210",
+            },
+            graph_payload={"accountEnabled": True},
+            last_status="SYNCED",
+            attempt_count=2,
+            attempt_history=[{"action": "created", "attempted_at": "2026-10-30T08:00:00+00:00"}],
+        )
+        run = SyncRun.objects.create(status=SyncRun.STATUS_COMPLETED, total_records=1, synced_records=1)
+        SyncLog.objects.create(
+            sync_run=run,
+            source_employee_id=record.source_employee_id,
+            status="SUCCESS",
+            level="INFO",
+            message="User created successfully in Microsoft; action=created",
+        )
+        staff_user = get_user_model().objects.create_user(
+            username="dashboard-admin",
+            password="dashboard-test-password",
+            is_staff=True,
+        )
+        self.client.force_login(staff_user)
+
+        response = self.client.get(reverse("index"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Accounts created")
+        self.assertContains(response, "Sam Lee")
+        self.assertContains(response, "Last synced setting: enabled")
+        self.assertContains(response, "Activity &amp; sync logs")
+        self.assertContains(response, "User created successfully in Microsoft")
+        self.assertEqual(response.context["counts"]["created"], 1)
+        self.assertEqual(response.context["record_page"].paginator.count, 1)
+
+    def test_dashboard_retry_action_records_success_and_creates_run_log(self):
+        record = EmployeeSyncRecord.objects.create(
+            source_employee_id="E5002",
+            email="retry@example.com",
+            payload={
+                "employeeCode": "E5002",
+                "firstName": "Retry",
+                "email": "retry@example.com",
+                "EmploymentStatus": "Active",
+            },
+        )
+        staff_user = get_user_model().objects.create_user(
+            username="retry-admin",
+            password="dashboard-test-password",
+            is_staff=True,
+        )
+        self.client.force_login(staff_user)
+
+        with patch("myapp.views.MicrosoftGraphClient") as graph_client_class:
+            graph_client = graph_client_class.return_value
+            graph_client.upsert_user.return_value = "updated"
+            graph_client.manager_sync_result = {"status": "unchanged", "reason": ""}
+            response = self.client.post(
+                reverse("record-action", args=[record.pk]),
+                {"action": "retry"},
+            )
+
+        self.assertEqual(response.status_code, 302)
+        graph_client.upsert_user.assert_called_once()
+        record.refresh_from_db()
+        self.assertEqual(record.last_status, "SYNCED")
+        self.assertEqual(record.attempt_history[-1]["action"], "updated")
+        run = SyncRun.objects.latest("id")
+        self.assertEqual(run.status, SyncRun.STATUS_COMPLETED)
+        self.assertTrue(run.logs.filter(status="SUCCESS", message__contains="action=updated").exists())
+
+    def test_dashboard_deactivation_action_updates_account_state_and_audit(self):
+        record = EmployeeSyncRecord.objects.create(
+            source_employee_id="E5003",
+            email="disable@example.com",
+            payload={"employeeCode": "E5003", "email": "disable@example.com"},
+            graph_payload={"accountEnabled": True},
+        )
+        staff_user = get_user_model().objects.create_user(
+            username="disable-admin",
+            password="dashboard-test-password",
+            is_staff=True,
+        )
+        self.client.force_login(staff_user)
+
+        with patch("myapp.views.MicrosoftGraphClient") as graph_client_class:
+            graph_client = graph_client_class.return_value
+            graph_client.deactivate_user.return_value = "deactivated"
+            response = self.client.post(
+                reverse("record-action", args=[record.pk]),
+                {"action": "deactivate"},
+            )
+
+        self.assertEqual(response.status_code, 302)
+        graph_client.deactivate_user.assert_called_once_with("disable@example.com")
+        record.refresh_from_db()
+        self.assertEqual(record.last_status, "SYNCED")
+        self.assertEqual(record.graph_payload["accountEnabled"], False)
+        self.assertEqual(record.attempt_history[-1]["action"], "deactivated")
+        self.assertTrue(
+            SyncLog.objects.filter(source_employee_id="E5003", message__contains="deactivated successfully").exists()
+        )
+
+    def test_dashboard_action_surfaces_and_records_graph_error(self):
+        record = EmployeeSyncRecord.objects.create(
+            source_employee_id="E5004",
+            email="failed@example.com",
+            payload={
+                "employeeCode": "E5004",
+                "email": "failed@example.com",
+                "EmploymentStatus": "Active",
+            },
+        )
+        staff_user = get_user_model().objects.create_user(
+            username="failure-admin",
+            password="dashboard-test-password",
+            is_staff=True,
+        )
+        self.client.force_login(staff_user)
+
+        with patch("myapp.views.MicrosoftGraphClient") as graph_client_class:
+            graph_client_class.return_value.upsert_user.side_effect = RuntimeError(
+                "Microsoft Graph permission denied."
+            )
+            response = self.client.post(
+                reverse("record-action", args=[record.pk]),
+                {"action": "retry"},
+                follow=True,
+            )
+
+        self.assertContains(response, "Microsoft Graph permission denied.")
+        record.refresh_from_db()
+        self.assertEqual(record.last_status, "FAILED")
+        self.assertEqual(record.last_error_message, "Microsoft Graph permission denied.")
+        self.assertTrue(
+            SyncLog.objects.filter(
+                source_employee_id="E5004",
+                status="FAILED",
+                message__contains="Microsoft Graph permission denied.",
+            ).exists()
+        )
+
     def test_build_graph_payload_uses_people_strong_fields(self):
         employee = {
             "employeeCode": "E1001",
