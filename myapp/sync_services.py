@@ -421,6 +421,7 @@ def update_sync_record_status(
     error_code: Optional[str] = None,
     source_payload: Optional[Dict[str, Any]] = None,
     graph_payload: Optional[Dict[str, Any]] = None,
+    action: Optional[str] = None,
 ) -> EmployeeSyncRecord:
     from django.utils import timezone
 
@@ -442,6 +443,8 @@ def update_sync_record_status(
         history_entry["source_payload"] = copy.deepcopy(source_payload)
     if graph_payload is not None:
         history_entry["graph_payload"] = copy.deepcopy(graph_payload)
+    if action:
+        history_entry["action"] = action
 
     history = list(record.attempt_history or [])
     history.append(history_entry)
