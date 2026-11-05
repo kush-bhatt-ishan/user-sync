@@ -124,12 +124,17 @@ Initialize the local SQLite database schema:
 python manage.py migrate
 ```
 
-### 3. Run Web Server & Admin Panel (Optional)
-To inspect sync records via the Django Admin UI:
+### 3. Run the Dashboard & Admin Panel
+Start the web app:
 ```powershell
 python manage.py runserver
 ```
-Navigate to `http://127.0.0.1:8000/admin/` in your browser.
+
+Sign in with a Django staff account at `http://127.0.0.1:8000/` to open the dashboard. It summarizes created, updated, deactivated, failed, and skipped employee records; provides search and status filters; shows the last error and a separate audit log; and lists recent run summaries. Expand an employee row to view the saved HR and manager details.
+
+From an employee row, **Retry sync** safely creates the Microsoft account if it is missing or updates it if it already exists. **Disable** deactivates the Microsoft account. Both actions are staff-only and create a `SyncRun`, `SyncLog`, and employee attempt-history entry. The existing manager-change workflow is available from the dashboard navigation.
+
+The Django Admin UI is also available at `http://127.0.0.1:8000/admin/`.
 
 ### 4. Execute Employee Synchronization
 To run the sync service for all employees:

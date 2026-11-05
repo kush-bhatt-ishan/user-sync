@@ -261,6 +261,7 @@ class Command(BaseCommand):
                 error_code="STATUS_NOT_MATCHED",
                 source_payload=employee,
                 graph_payload=graph_payload,
+                action="skipped",
             )
             create_sync_log(
                 sync_run,
@@ -287,6 +288,7 @@ class Command(BaseCommand):
                 error_code="SYNC_FAILED",
                 source_payload=employee,
                 graph_payload=graph_payload,
+                action="sync",
             )
             create_sync_log(
                 sync_run,
@@ -312,6 +314,7 @@ class Command(BaseCommand):
                 message=success_message,
                 source_payload=employee,
                 graph_payload=graph_payload,
+                action=action,
             )
             create_sync_log(
                 sync_run,
@@ -350,6 +353,7 @@ class Command(BaseCommand):
                 error_code="STATUS_NOT_MATCHED",
                 source_payload=employee,
                 graph_payload=graph_payload,
+                action="skipped",
             )
             create_sync_log(
                 sync_run,
@@ -376,6 +380,7 @@ class Command(BaseCommand):
                 error_code="RETRY_FAILED",
                 source_payload=employee,
                 graph_payload=graph_payload,
+                action="sync",
             )
             create_sync_log(
                 sync_run,
@@ -401,6 +406,7 @@ class Command(BaseCommand):
                 message=success_message,
                 source_payload=employee,
                 graph_payload=graph_payload,
+                action=action,
             )
             create_sync_log(
                 sync_run,
@@ -438,7 +444,9 @@ class Command(BaseCommand):
         try:
             action = graph_client.deactivate_user(record.email or "")
         except Exception as exc:  # pragma: no cover - command-level safety
-            update_sync_record_status(record, "FAILED", message=str(exc), error_code="DEACTIVATE_FAILED")
+            update_sync_record_status(
+                record, "FAILED", message=str(exc), error_code="DEACTIVATE_FAILED", action="deactivate"
+            )
             create_sync_log(
                 sync_run,
                 record,
@@ -455,7 +463,16 @@ class Command(BaseCommand):
                 )
             )
         else:
-            update_sync_record_status(record, "SYNCED", message="User deactivated successfully in Microsoft")
+            update_sync_record_status(
+                record,
+                "SYNCED",
+                message=(
+                    "User deactivated successfully in Microsoft"
+                    if action == "deactivated"
+                    else "No Microsoft account was found; there was nothing to deactivate"
+                ),
+                action=action,
+            )
             create_sync_log(
                 sync_run,
                 record,
