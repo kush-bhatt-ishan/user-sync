@@ -1,4 +1,7 @@
+from django.contrib.auth.models import User
 from django.db import models
+from django.db.models.signals import post_save
+from django.dispatch import receiver
 from django.utils import timezone
 
 
@@ -81,3 +84,88 @@ class SyncLog(models.Model):
 
     def __str__(self) -> str:
         return f"{self.status}::{self.source_employee_id}"
+
+
+class UserProfile(models.Model):
+    ROLE_SUPER_ADMIN = "SUPER_ADMIN"
+    ROLE_ADMIN = "ADMIN"
+    ROLE_STANDARD = "STANDARD"
+    ROLE_READ_ONLY = "READ_ONLY"
+
+    ROLE_CHOICES = (
+        (ROLE_SUPER_ADMIN, "Super Admin"),
+        (ROLE_ADMIN, "Admin"),
+        (ROLE_STANDARD, "Standard User"),
+        (ROLE_READ_ONLY, "Read-Only User"),
+    )
+
+    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name="profile")
+    role = models.CharField(max_length=30, choices=ROLE_CHOICES, default=ROLE_STANDARD)
+    department = models.CharField(max_length=150, blank=True, default="")
+    phone = models.CharField(max_length=50, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "myapp_user_profile"
+
+    def __str__(self) -> str:
+        return f"{self.user.username} ({self.get_role_display()})"
+
+    @property
+    def is_super_admin(self) -> bool:
+        return self.user.is_superuser or self.role == self.ROLE_SUPER_ADMIN
+
+    @property
+    def is_admin(self) -> bool:
+        return self.is_super_admin or self.role == self.ROLE_ADMIN
+
+    @property
+    def can_manage_users(self) -> bool:
+        return self.is_admin
+
+    @property
+    def can_retry_sync(self) -> bool:
+        return self.is_admin or self.role == self.ROLE_STANDARD
+
+    @property
+    def can_deactivate(self) -> bool:
+        return self.is_admin
+
+    @property
+    def can_change_manager(self) -> bool:
+        return self.is_admin or self.role == self.ROLE_STANDARD
+
+    @property
+    def is_read_only(self) -> bool:
+        return not self.is_admin and self.role == self.ROLE_READ_ONLY
+
+
+def get_user_profile(user) -> UserProfile:
+    """Safely retrieve or create UserProfile for any user."""
+    if not user or not user.is_authenticated:
+        return None
+    profile = getattr(user, "profile", None)
+    if profile is None:
+        role = (
+            UserProfile.ROLE_SUPER_ADMIN
+            if user.is_superuser
+            else UserProfile.ROLE_ADMIN
+            if user.is_staff
+            else UserProfile.ROLE_STANDARD
+        )
+        profile, _ = UserProfile.objects.get_or_create(user=user, defaults={"role": role})
+    return profile
+
+
+@receiver(post_save, sender=User)
+def create_or_update_user_profile(sender, instance, created, **kwargs):
+    if created:
+        role = (
+            UserProfile.ROLE_SUPER_ADMIN
+            if instance.is_superuser
+            else UserProfile.ROLE_ADMIN
+            if instance.is_staff
+            else UserProfile.ROLE_STANDARD
+        )
+        UserProfile.objects.get_or_create(user=instance, defaults={"role": role})
