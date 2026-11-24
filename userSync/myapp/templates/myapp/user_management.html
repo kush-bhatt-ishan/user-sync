@@ -1,0 +1,658 @@
+{% extends "myapp/base.html" %}
+
+{% block title %}User Management &amp; Access Control | Ishan Technologies{% endblock %}
+{% block breadcrumb %}User Management &amp; Access Control{% endblock %}
+
+{% block extra_head %}
+<style>
+    /* ── Metrics Grid for Users ── */
+    .user-metrics-grid {
+        display: grid;
+        grid-template-columns: repeat(5, 1fr);
+        gap: 16px;
+        margin-bottom: 28px;
+    }
+
+    .u-metric-card {
+        background: var(--bg-surface);
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        padding: 18px 20px;
+        box-shadow: var(--card-shadow);
+        transition: transform 0.2s ease, border-color 0.2s ease;
+    }
+
+    .u-metric-card:hover {
+        transform: translateY(-2px);
+        border-color: var(--primary);
+    }
+
+    .u-metric-top {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        font-size: 11px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--text-muted);
+    }
+
+    .u-metric-icon {
+        width: 32px;
+        height: 32px;
+        border-radius: 8px;
+        display: grid;
+        place-items: center;
+        font-size: 14px;
+    }
+
+    .u-metric-val {
+        font-size: 28px;
+        font-weight: 800;
+        color: var(--text-main);
+        margin: 10px 0 2px;
+        letter-spacing: -0.02em;
+        line-height: 1;
+    }
+
+    .u-metric-sub {
+        font-size: 11px;
+        color: var(--text-subtle);
+    }
+
+    .u-total .u-metric-icon { background: var(--primary-soft); color: var(--primary); }
+    .u-super .u-metric-icon { background: var(--warning-soft); color: var(--warning); }
+    .u-admin .u-metric-icon { background: rgba(99, 102, 241, 0.12); color: #6366f1; }
+    .u-standard .u-metric-icon { background: var(--success-soft); color: var(--success); }
+    .u-inactive .u-metric-icon { background: var(--danger-soft); color: var(--danger); }
+
+    /* ── Page Header ── */
+    .page-header-flex {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 20px;
+        margin-bottom: 24px;
+        flex-wrap: wrap;
+    }
+
+    .page-header-flex h1 {
+        font-size: 24px;
+        font-weight: 800;
+        color: var(--text-main);
+        letter-spacing: -0.02em;
+    }
+
+    .page-header-flex p {
+        font-size: 13px;
+        color: var(--text-muted);
+        margin-top: 4px;
+    }
+
+    /* ── Role Badges ── */
+    .role-tag-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 4px 10px;
+        border-radius: 20px;
+        font-size: 11px;
+        font-weight: 700;
+    }
+
+    .role-tag-pill::before {
+        content: '';
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: currentColor;
+    }
+
+    .role-super-admin {
+        background: #fef3c7;
+        color: #b45309;
+    }
+    .role-admin {
+        background: #e0e7ff;
+        color: #4338ca;
+    }
+    .role-standard {
+        background: #dcfce7;
+        color: #15803d;
+    }
+    .role-read-only {
+        background: #f1f5f9;
+        color: #475569;
+    }
+
+    :root[data-theme="dark"] .role-super-admin { background: rgba(245, 158, 11, 0.2); color: #fbbf24; }
+    :root[data-theme="dark"] .role-admin { background: rgba(99, 102, 241, 0.2); color: #a5b4fc; }
+    :root[data-theme="dark"] .role-standard { background: rgba(34, 197, 94, 0.2); color: #86efac; }
+    :root[data-theme="dark"] .role-read-only { background: rgba(148, 163, 184, 0.2); color: #cbd5e1; }
+
+    /* ── Interactive Status Switch ── */
+    .status-toggle-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 4px 10px;
+        border-radius: 20px;
+        font-size: 11px;
+        font-weight: 700;
+        border: 1px solid transparent;
+        cursor: pointer;
+        transition: all 0.15s ease;
+    }
+
+    .status-active-badge {
+        background: var(--success-soft);
+        color: var(--success);
+        border-color: rgba(16, 185, 129, 0.3);
+    }
+    .status-active-badge:hover {
+        background: #dcfce7;
+        border-color: var(--success);
+    }
+
+    .status-inactive-badge {
+        background: var(--danger-soft);
+        color: var(--danger);
+        border-color: rgba(244, 63, 94, 0.3);
+    }
+    .status-inactive-badge:hover {
+        background: #ffe4e6;
+        border-color: var(--danger);
+    }
+
+    /* ── Modal Form Controls ── */
+    .modal-grid-2 {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 14px;
+    }
+
+    .modal-form-group {
+        margin-bottom: 16px;
+    }
+
+    .modal-form-group label {
+        display: block;
+        font-size: 12px;
+        font-weight: 700;
+        color: var(--text-main);
+        margin-bottom: 6px;
+    }
+
+    .modal-form-control {
+        width: 100%;
+        padding: 9px 13px;
+        border-radius: 8px;
+        border: 1px solid var(--border);
+        background: var(--bg-base);
+        color: var(--text-main);
+        font-size: 13px;
+        outline: none;
+        transition: all 0.2s ease;
+    }
+
+    .modal-form-control:focus {
+        border-color: var(--primary);
+        box-shadow: 0 0 0 3px var(--primary-soft);
+        background: var(--bg-surface);
+    }
+
+    .modal-helper-text {
+        font-size: 11px;
+        color: var(--text-subtle);
+        margin-top: 4px;
+    }
+
+    .checkbox-inline {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-top: 8px;
+        font-size: 12px;
+        color: var(--text-main);
+        cursor: pointer;
+    }
+
+    @media (max-width: 1100px) {
+        .user-metrics-grid {
+            grid-template-columns: repeat(3, 1fr);
+        }
+    }
+
+    @media (max-width: 768px) {
+        .user-metrics-grid {
+            grid-template-columns: repeat(2, 1fr);
+        }
+        .modal-grid-2 {
+            grid-template-columns: 1fr;
+        }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<!-- Page Header -->
+<div class="page-header-flex">
+    <div>
+        <h1>User Permissions &amp; Roles</h1>
+        <p>Enterprise Role-Based Access Control (RBAC). Configure user credentials, manage roles, and enforce security policies.</p>
+    </div>
+    <button type="button" class="btn btn-primary" onclick="openCreateUserModal();">
+        <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z"/>
+        </svg>
+        <span>Add New User</span>
+    </button>
+</div>
+
+<!-- Summary Metrics Cards -->
+<div class="user-metrics-grid">
+    <div class="u-metric-card u-total">
+        <div class="u-metric-top">
+            <span>Total Accounts</span>
+            <div class="u-metric-icon">👥</div>
+        </div>
+        <div class="u-metric-val">{{ user_counts.total|default:"0" }}</div>
+        <div class="u-metric-sub">Registered system users</div>
+    </div>
+
+    <div class="u-metric-card u-super">
+        <div class="u-metric-top">
+            <span>Super Admins</span>
+            <div class="u-metric-icon">👑</div>
+        </div>
+        <div class="u-metric-val">{{ user_counts.super_admin|default:"0" }}</div>
+        <div class="u-metric-sub">Full system clearance</div>
+    </div>
+
+    <div class="u-metric-card u-admin">
+        <div class="u-metric-top">
+            <span>Admins</span>
+            <div class="u-metric-icon">🛡️</div>
+        </div>
+        <div class="u-metric-val">{{ user_counts.admin|default:"0" }}</div>
+        <div class="u-metric-sub">Sync &amp; user management</div>
+    </div>
+
+    <div class="u-metric-card u-standard">
+        <div class="u-metric-top">
+            <span>Standard Users</span>
+            <div class="u-metric-icon">⚡</div>
+        </div>
+        <div class="u-metric-val">{{ user_counts.standard|default:"0" }}</div>
+        <div class="u-metric-sub">Sync retry &amp; manager edit</div>
+    </div>
+
+    <div class="u-metric-card u-inactive">
+        <div class="u-metric-top">
+            <span>Inactive</span>
+            <div class="u-metric-icon">🔒</div>
+        </div>
+        <div class="u-metric-val">{{ user_counts.inactive|default:"0" }}</div>
+        <div class="u-metric-sub">Deactivated accounts</div>
+    </div>
+</div>
+
+<!-- Main User Management Table Card -->
+<div class="card">
+    <div class="card-header">
+        <div>
+            <h2 class="card-title">System Users &amp; Role-Based Permissions</h2>
+            <p class="card-subtitle">Manage accounts authorized to interact with the PeopleStrong and Microsoft Entra sync pipeline.</p>
+        </div>
+        <span class="status-badge-pill" style="background:var(--bg-base);color:var(--text-muted);">
+            {{ page_obj.paginator.count }} Accounts
+        </span>
+    </div>
+
+    <!-- Toolbar: Filters and Search -->
+    <div class="table-toolbar">
+        <nav class="filter-tabs">
+            <a href="?role=all{% if query %}&amp;q={{ query|urlencode }}{% endif %}" class="filter-tab {% if role_filter == 'all' %}active{% endif %}">All Roles</a>
+            <a href="?role=SUPER_ADMIN{% if query %}&amp;q={{ query|urlencode }}{% endif %}" class="filter-tab {% if role_filter == 'SUPER_ADMIN' %}active{% endif %}">Super Admin</a>
+            <a href="?role=ADMIN{% if query %}&amp;q={{ query|urlencode }}{% endif %}" class="filter-tab {% if role_filter == 'ADMIN' %}active{% endif %}">Admin</a>
+            <a href="?role=STANDARD{% if query %}&amp;q={{ query|urlencode }}{% endif %}" class="filter-tab {% if role_filter == 'STANDARD' %}active{% endif %}">Standard User</a>
+            <a href="?role=READ_ONLY{% if query %}&amp;q={{ query|urlencode }}{% endif %}" class="filter-tab {% if role_filter == 'READ_ONLY' %}active{% endif %}">Read-Only</a>
+        </nav>
+
+        <form class="search-form" method="get" action="{% url 'user-management' %}">
+            <input type="hidden" name="role" value="{{ role_filter }}">
+            <input type="search" name="q" value="{{ query }}" class="search-input" placeholder="Search by name, email, or username...">
+            <button type="submit" class="btn btn-secondary btn-sm">Search</button>
+            {% if query %}
+            <a href="?role={{ role_filter }}" class="btn btn-secondary btn-sm" title="Clear search">Clear</a>
+            {% endif %}
+        </form>
+    </div>
+
+    <!-- Data Table -->
+    <div class="table-responsive">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>User Identity</th>
+                    <th>Role &amp; Permissions</th>
+                    <th>Account Status</th>
+                    <th>Department &amp; Contact</th>
+                    <th>Date Joined</th>
+                    <th>Last Active</th>
+                    <th style="text-align:right;">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for item in page_obj %}
+                <tr>
+                    <td>
+                        <div class="user-cell">
+                            <div class="user-avatar-mark" style="background:linear-gradient(135deg, rgba(37,99,235,0.15), rgba(124,58,237,0.15));color:var(--text-main);">
+                                {{ item.user.first_name|default:item.user.username|slice:":1"|upper }}
+                            </div>
+                            <div>
+                                <div class="user-name-title">
+                                    {{ item.user.get_full_name|default:item.user.username }}
+                                    {% if item.user.pk == request.user.pk %}
+                                    <span style="font-size:10px;font-weight:700;padding:2px 7px;border-radius:10px;background:var(--primary-soft);color:var(--primary);margin-left:4px;">You</span>
+                                    {% endif %}
+                                </div>
+                                <div class="user-email-subtitle">{{ item.user.email|default:item.user.username }}</div>
+                            </div>
+                        </div>
+                    </td>
+                    <td>
+                        <span class="role-tag-pill 
+                            {% if item.profile.is_super_admin %}role-super-admin
+                            {% elif item.profile.is_admin %}role-admin
+                            {% elif item.profile.is_read_only %}role-read-only
+                            {% else %}role-standard{% endif %}">
+                            {{ item.profile.get_role_display|default:"Standard User" }}
+                        </span>
+                    </td>
+                    <td>
+                        <!-- Status Toggle Action Form -->
+                        <form method="post" action="{% url 'user-toggle' item.user.pk %}" id="toggleStatusForm{{ item.user.pk }}" style="display:inline;">
+                            {% csrf_token %}
+                            <button type="button" class="status-toggle-btn {% if item.user.is_active %}status-active-badge{% else %}status-inactive-badge{% endif %}"
+                                {% if item.user.pk == request.user.pk %}disabled title="Cannot deactivate yourself"{% endif %}
+                                onclick="showConfirmModal('Toggle Status for {{ item.user.username|escapejs }}', 'Change status to {{ item.user.is_active|yesno:'Inactive,Active' }}? {% if item.user.is_active %}The user will be immediately blocked from signing in.{% else %}The user will be allowed to sign in.{% endif %}', document.getElementById('toggleStatusForm{{ item.user.pk }}'), {{ item.user.is_active|yesno:'true,false' }});">
+                                {% if item.user.is_active %}
+                                    <span>&bull; Active</span>
+                                {% else %}
+                                    <span>&times; Inactive</span>
+                                {% endif %}
+                            </button>
+                        </form>
+                    </td>
+                    <td>
+                        <div style="font-weight:600;color:var(--text-main);">{{ item.profile.department|default:"—" }}</div>
+                        <div style="font-size:11px;color:var(--text-subtle);">{{ item.profile.phone|default:"No phone" }}</div>
+                    </td>
+                    <td style="color:var(--text-muted);font-size:12px;">
+                        {{ item.user.date_joined|date:"M j, Y" }}
+                    </td>
+                    <td style="color:var(--text-muted);font-size:12px;">
+                        {% if item.user.last_login %}
+                            {{ item.user.last_login|date:"M j, Y · g:i A" }}
+                        {% else %}
+                            <span style="color:var(--text-subtle);">Never logged in</span>
+                        {% endif %}
+                    </td>
+                    <td style="text-align:right;">
+                        <div style="display:inline-flex;gap:6px;">
+                            <!-- Edit Button -->
+                            <button type="button" class="btn btn-secondary btn-sm"
+                                onclick="openEditUserModal('{{ item.user.pk }}', '{{ item.user.username|escapejs }}', '{{ item.user.first_name|escapejs }}', '{{ item.user.last_name|escapejs }}', '{{ item.user.email|escapejs }}', '{{ item.profile.role }}', '{{ item.profile.department|escapejs }}', '{{ item.profile.phone|escapejs }}', {{ item.user.is_active|yesno:'true,false' }});">
+                                <svg width="13" height="13" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"/></svg>
+                                <span>Edit</span>
+                            </button>
+
+                            <!-- Password Reset Button -->
+                            <button type="button" class="btn btn-secondary btn-sm"
+                                onclick="openResetPasswordModal('{{ item.user.pk }}', '{{ item.user.username|escapejs }}');">
+                                <svg width="13" height="13" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"/></svg>
+                                <span>Reset Pass</span>
+                            </button>
+
+                            <!-- Delete Button (Super Admin only) -->
+                            {% if profile.is_super_admin and item.user.pk != request.user.pk %}
+                            <form method="post" action="{% url 'user-delete' item.user.pk %}" id="deleteUserForm{{ item.user.pk }}" style="display:inline;">
+                                {% csrf_token %}
+                                <button type="button" class="btn btn-danger-outline btn-sm"
+                                    onclick="showConfirmModal('Delete User {{ item.user.username|escapejs }}', 'Permanently remove this user account? All access will be revoked immediately.', document.getElementById('deleteUserForm{{ item.user.pk }}'), true);">
+                                    Delete
+                                </button>
+                            </form>
+                            {% endif %}
+                        </div>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="7" style="text-align:center;padding:48px 20px;color:var(--text-muted);">
+                        <div style="font-size:32px;margin-bottom:8px;">👥</div>
+                        <strong style="color:var(--text-main);font-size:15px;display:block;">No system users found</strong>
+                        <p style="font-size:12px;margin-top:4px;">Try a different search term or change the role filter.</p>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Pagination -->
+    {% if page_obj.paginator.num_pages > 1 %}
+    <div class="pagination-bar">
+        <span>Showing page <strong>{{ page_obj.number }}</strong> of <strong>{{ page_obj.paginator.num_pages }}</strong></span>
+        <div class="pagination-links">
+            {% if page_obj.has_previous %}
+            <a href="?role={{ role_filter }}&amp;q={{ query|urlencode }}&amp;page={{ page_obj.previous_page_number }}" class="page-btn">&larr; Previous</a>
+            {% endif %}
+            {% if page_obj.has_next %}
+            <a href="?role={{ role_filter }}&amp;q={{ query|urlencode }}&amp;page={{ page_obj.next_page_number }}" class="page-btn">Next &rarr;</a>
+            {% endif %}
+        </div>
+    </div>
+    {% endif %}
+</div>
+
+<!-- ── Modal: Create User ── -->
+<div class="modal-overlay" id="createUserModal">
+    <div class="modal-box" style="max-width:560px;">
+        <form method="post" action="{% url 'user-create' %}">
+            {% csrf_token %}
+            <div class="modal-header">
+                <h3 class="modal-title">Create New System User</h3>
+                <button type="button" class="flash-close" onclick="closeCreateUserModal();">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="modal-grid-2">
+                    <div class="modal-form-group">
+                        <label for="create_username">Username *</label>
+                        <input type="text" id="create_username" name="username" class="modal-form-control" placeholder="e.g. john.doe" required>
+                    </div>
+                    <div class="modal-form-group">
+                        <label for="create_email">Corporate Email</label>
+                        <input type="email" id="create_email" name="email" class="modal-form-control" placeholder="john.doe@ishantech.biz">
+                    </div>
+                </div>
+
+                <div class="modal-grid-2">
+                    <div class="modal-form-group">
+                        <label for="create_first_name">First Name</label>
+                        <input type="text" id="create_first_name" name="first_name" class="modal-form-control" placeholder="John">
+                    </div>
+                    <div class="modal-form-group">
+                        <label for="create_last_name">Last Name</label>
+                        <input type="text" id="create_last_name" name="last_name" class="modal-form-control" placeholder="Doe">
+                    </div>
+                </div>
+
+                <div class="modal-form-group">
+                    <label for="create_password">Initial Password *</label>
+                    <input type="password" id="create_password" name="password" class="modal-form-control" minlength="6" required placeholder="Minimum 6 characters">
+                </div>
+
+                <div class="modal-grid-2">
+                    <div class="modal-form-group">
+                        <label for="create_role">Role Permission *</label>
+                        <select id="create_role" name="role" class="modal-form-control" required>
+                            {% if profile.is_super_admin %}
+                            <option value="SUPER_ADMIN">Super Admin (Full System Access)</option>
+                            {% endif %}
+                            <option value="ADMIN">Admin (Sync &amp; User Management)</option>
+                            <option value="STANDARD" selected>Standard User (Sync Retry &amp; Manager)</option>
+                            <option value="READ_ONLY">Read-Only User (View Portal Only)</option>
+                        </select>
+                        <div class="modal-helper-text">Controls pages and actions available to this account.</div>
+                    </div>
+                    <div class="modal-form-group">
+                        <label for="create_department">Department</label>
+                        <input type="text" id="create_department" name="department" class="modal-form-control" placeholder="IT / Operations">
+                    </div>
+                </div>
+
+                <div class="modal-form-group">
+                    <label class="checkbox-inline">
+                        <input type="checkbox" id="create_is_active" name="is_active" value="true" checked class="remember-checkbox" style="width:16px;height:16px;">
+                        <span>Account active immediately (User can log in)</span>
+                    </label>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" onclick="closeCreateUserModal();">Cancel</button>
+                <button type="submit" class="btn btn-primary">Create User Account</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- ── Modal: Edit User ── -->
+<div class="modal-overlay" id="editUserModal">
+    <div class="modal-box" style="max-width:560px;">
+        <form method="post" id="editUserForm" action="">
+            {% csrf_token %}
+            <div class="modal-header">
+                <h3 class="modal-title">Edit User Details</h3>
+                <button type="button" class="flash-close" onclick="closeEditUserModal();">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="modal-form-group">
+                    <label>Username</label>
+                    <input type="text" id="edit_username" class="modal-form-control" disabled style="opacity:0.6;cursor:not-allowed;">
+                </div>
+
+                <div class="modal-grid-2">
+                    <div class="modal-form-group">
+                        <label for="edit_first_name">First Name</label>
+                        <input type="text" id="edit_first_name" name="first_name" class="modal-form-control">
+                    </div>
+                    <div class="modal-form-group">
+                        <label for="edit_last_name">Last Name</label>
+                        <input type="text" id="edit_last_name" name="last_name" class="modal-form-control">
+                    </div>
+                </div>
+
+                <div class="modal-form-group">
+                    <label for="edit_email">Corporate Email</label>
+                    <input type="email" id="edit_email" name="email" class="modal-form-control">
+                </div>
+
+                <div class="modal-grid-2">
+                    <div class="modal-form-group">
+                        <label for="edit_role">Assigned Role</label>
+                        <select id="edit_role" name="role" class="modal-form-control" required>
+                            {% if profile.is_super_admin %}
+                            <option value="SUPER_ADMIN">Super Admin (Full System Access)</option>
+                            {% endif %}
+                            <option value="ADMIN">Admin (Sync &amp; User Management)</option>
+                            <option value="STANDARD">Standard User (Sync Retry &amp; Manager)</option>
+                            <option value="READ_ONLY">Read-Only User (View Portal Only)</option>
+                        </select>
+                    </div>
+                    <div class="modal-form-group">
+                        <label for="edit_department">Department</label>
+                        <input type="text" id="edit_department" name="department" class="modal-form-control">
+                    </div>
+                </div>
+
+                <div class="modal-form-group">
+                    <label class="checkbox-inline">
+                        <input type="checkbox" id="edit_is_active" name="is_active" value="true" class="remember-checkbox" style="width:16px;height:16px;">
+                        <span>Account active (Allowed to sign in)</span>
+                    </label>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" onclick="closeEditUserModal();">Cancel</button>
+                <button type="submit" class="btn btn-primary">Save Changes</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- ── Modal: Reset Password ── -->
+<div class="modal-overlay" id="resetPasswordModal">
+    <div class="modal-box" style="max-width:440px;">
+        <form method="post" id="resetPasswordForm" action="">
+            {% csrf_token %}
+            <div class="modal-header">
+                <h3 class="modal-title">Reset User Password</h3>
+                <button type="button" class="flash-close" onclick="closeResetPasswordModal();">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p style="font-size:12px;color:var(--text-muted);margin-bottom:14px;">
+                    Set a new password for account <strong id="reset_username_label" style="color:var(--text-main);"></strong>. The user will be required to use this new password on their next sign-in.
+                </p>
+                <div class="modal-form-group">
+                    <label for="new_password">New Password (min 6 characters)</label>
+                    <input type="password" id="new_password" name="new_password" class="modal-form-control" minlength="6" required placeholder="Enter new strong password">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" onclick="closeResetPasswordModal();">Cancel</button>
+                <button type="submit" class="btn btn-primary">Update Password</button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+    function openCreateUserModal() {
+        document.getElementById('createUserModal').classList.add('active');
+    }
+    function closeCreateUserModal() {
+        document.getElementById('createUserModal').classList.remove('active');
+    }
+
+    function openEditUserModal(userId, username, firstName, lastName, email, role, department, phone, isActive) {
+        document.getElementById('editUserForm').action = '/user-management/' + userId + '/edit/';
+        document.getElementById('edit_username').value = username;
+        document.getElementById('edit_first_name').value = firstName;
+        document.getElementById('edit_last_name').value = lastName;
+        document.getElementById('edit_email').value = email;
+        document.getElementById('edit_role').value = role;
+        document.getElementById('edit_department').value = department;
+        document.getElementById('edit_is_active').checked = isActive;
+        document.getElementById('editUserModal').classList.add('active');
+    }
+    function closeEditUserModal() {
+        document.getElementById('editUserModal').classList.remove('active');
+    }
+
+    function openResetPasswordModal(userId, username) {
+        document.getElementById('resetPasswordForm').action = '/user-management/' + userId + '/reset-password/';
+        document.getElementById('reset_username_label').innerText = username;
+        document.getElementById('new_password').value = '';
+        document.getElementById('resetPasswordModal').classList.add('active');
+    }
+    function closeResetPasswordModal() {
+        document.getElementById('resetPasswordModal').classList.remove('active');
+    }
+</script>
+{% endblock %}

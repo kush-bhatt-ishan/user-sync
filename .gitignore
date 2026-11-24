@@ -1,5 +1,49 @@
+# ── Python ───────────────────────────────────────────────
 __pycache__/
 *.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# ── Virtual environment ───────────────────────────────────
+venv/
+.venv/
+env/
+ENV/
+
+# ── Django ────────────────────────────────────────────────
 *.sqlite3
+db.sqlite3-journal
+/staticfiles/
+/mediafiles/
+/media/
+
+# ── Environment & secrets ─────────────────────────────────
 .env
+.env.*
+!.env.example          # keep the example template
+
+# ── Logs ─────────────────────────────────────────────────
+*.log
 sync.log
+
+# ── OS ───────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── IDE / Editor ─────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ── Testing & coverage ───────────────────────────────────
+.coverage
+htmlcov/
+.pytest_cache/
