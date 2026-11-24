@@ -24,7 +24,7 @@ class SyncServiceTests(TestCase):
         response = self.client.get(reverse("index"))
 
         self.assertEqual(response.status_code, 302)
-        self.assertIn("/admin/login/", response.url)
+        self.assertTrue("/login/" in response.url or "/admin/login/" in response.url)
 
     def test_dashboard_shows_unique_employee_and_separate_audit_logs(self):
         record = EmployeeSyncRecord.objects.create(
@@ -480,7 +480,7 @@ class SyncServiceTests(TestCase):
         response = self.client.get(reverse("change-l1-manager"))
 
         self.assertEqual(response.status_code, 302)
-        self.assertIn("/admin/login/", response.url)
+        self.assertTrue("/login/" in response.url or "/admin/login/" in response.url)
 
     def test_manager_change_workflow_updates_verifies_and_persists(self):
         record = EmployeeSyncRecord.objects.create(
@@ -909,3 +909,137 @@ class SyncServiceTests(TestCase):
         self.assertEqual(record.last_status, EmployeeSyncRecord.STATUS_SKIPPED)
         self.assertIn("EmploymentStatus is 'Probation'", record.last_error_message)
         self.assertEqual(record.last_error_code, "STATUS_NOT_MATCHED")
+
+
+class AuthenticationAndRBACTests(TestCase):
+    def setUp(self):
+        User = get_user_model()
+        from myapp.models import UserProfile, get_user_profile
+
+        # Super Admin
+        self.super_admin = User.objects.create_superuser(
+            username="superadmin", email="super@example.com", password="password123"
+        )
+        self.super_profile = get_user_profile(self.super_admin)
+
+        # Admin
+        self.admin = User.objects.create_user(
+            username="adminuser", email="admin@example.com", password="password123", is_staff=True
+        )
+        self.admin_profile = get_user_profile(self.admin)
+        self.admin_profile.role = UserProfile.ROLE_ADMIN
+        self.admin_profile.save()
+
+        # Standard User
+        self.standard_user = User.objects.create_user(
+            username="standarduser", email="standard@example.com", password="password123"
+        )
+        self.standard_profile = get_user_profile(self.standard_user)
+        self.standard_profile.role = UserProfile.ROLE_STANDARD
+        self.standard_profile.save()
+
+        # Read-Only User
+        self.readonly_user = User.objects.create_user(
+            username="readonlyuser", email="readonly@example.com", password="password123"
+        )
+        self.readonly_profile = get_user_profile(self.readonly_user)
+        self.readonly_profile.role = UserProfile.ROLE_READ_ONLY
+        self.readonly_profile.save()
+
+    def test_unauthenticated_access_redirects_to_login(self):
+        for url_name in ["index", "change-l1-manager", "user-management"]:
+            response = self.client.get(reverse(url_name))
+            self.assertEqual(response.status_code, 302)
+            self.assertIn("/login/", response.url)
+
+    def test_login_flow_with_valid_and_invalid_credentials(self):
+        # Invalid
+        res_fail = self.client.post(
+            reverse("login"),
+            {"username": "standarduser", "password": "wrongpassword"},
+        )
+        self.assertEqual(res_fail.status_code, 200)
+        self.assertContains(res_fail, "Invalid username or password")
+
+        # Valid
+        res_ok = self.client.post(
+            reverse("login"),
+            {"username": "standarduser", "password": "password123", "remember_me": "on"},
+        )
+        self.assertEqual(res_ok.status_code, 302)
+        self.assertEqual(res_ok.url, reverse("index"))
+
+    def test_inactive_user_cannot_log_in(self):
+        self.standard_user.is_active = False
+        self.standard_user.save()
+
+        response = self.client.post(
+            reverse("login"),
+            {"username": "standarduser", "password": "password123"},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "deactivated")
+
+    def test_logout_clears_session(self):
+        self.client.force_login(self.standard_user)
+        response = self.client.post(reverse("logout"))
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.url, reverse("login"))
+
+    def test_read_only_user_cannot_trigger_sync_retry(self):
+        record = EmployeeSyncRecord.objects.create(
+            source_employee_id="E9001",
+            email="ro.test@example.com",
+            payload={"employeeCode": "E9001", "email": "ro.test@example.com", "EmploymentStatus": "Active"},
+        )
+        self.client.force_login(self.readonly_user)
+
+        response = self.client.post(
+            reverse("record-action", args=[record.pk]),
+            {"action": "retry"},
+            follow=True,
+        )
+        self.assertContains(response, "Permission denied")
+
+    def test_read_only_user_cannot_access_user_management(self):
+        self.client.force_login(self.readonly_user)
+        response = self.client.get(reverse("user-management"), follow=True)
+        self.assertContains(response, "Permission denied")
+
+    def test_standard_user_cannot_deactivate_account(self):
+        record = EmployeeSyncRecord.objects.create(
+            source_employee_id="E9002",
+            email="deact.test@example.com",
+            payload={"employeeCode": "E9002", "email": "deact.test@example.com"},
+        )
+        self.client.force_login(self.standard_user)
+
+        response = self.client.post(
+            reverse("record-action", args=[record.pk]),
+            {"action": "deactivate"},
+            follow=True,
+        )
+        self.assertContains(response, "Permission denied")
+
+    def test_admin_can_manage_users(self):
+        self.client.force_login(self.admin)
+        response = self.client.get(reverse("user-management"))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "User Permissions &amp; Roles")
+
+        # Create user via management
+        create_res = self.client.post(
+            reverse("user-create"),
+            {
+                "username": "newoperator",
+                "email": "operator@example.com",
+                "password": "strongpassword123",
+                "role": "STANDARD",
+                "department": "Network Ops",
+                "is_active": "true",
+            },
+        )
+        self.assertEqual(create_res.status_code, 302)
+        User = get_user_model()
+        self.assertTrue(User.objects.filter(username="newoperator").exists())
+

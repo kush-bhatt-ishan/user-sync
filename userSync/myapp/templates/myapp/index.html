@@ -1,15 +1,885 @@
-<!doctype html>
-<html lang="en">
-<head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>PeopleStrong to Microsoft Entra sync</title>
-</head>
-<body>
-    <main>
-        <h1>PeopleStrong to Microsoft Entra sync</h1>
-        <p>The synchronization application is running.</p>
-        <p><a href="{% url 'change-l1-manager' %}">Change an employee's L1 manager</a></p>
-    </main>
-</body>
-</html>
+{% extends "myapp/base.html" %}
+
+{% block title %}Sync Dashboard · PeopleStrong to Microsoft Entra | Ishan Technologies{% endblock %}
+{% block breadcrumb %}Sync Dashboard{% endblock %}
+
+{% block extra_head %}
+<style>
+    /* ── Metrics Grid ── */
+    .metrics-grid {
+        display: grid;
+        grid-template-columns: repeat(5, 1fr);
+        gap: 16px;
+        margin-bottom: 28px;
+    }
+
+    .metric-card {
+        background: var(--bg-surface);
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        padding: 20px;
+        box-shadow: var(--card-shadow);
+        position: relative;
+        overflow: hidden;
+        transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+    }
+
+    .metric-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1);
+        border-color: var(--primary);
+    }
+
+    .metric-top {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        color: var(--text-muted);
+        font-size: 12px;
+        font-weight: 600;
+    }
+
+    .metric-icon {
+        width: 32px;
+        height: 32px;
+        border-radius: 8px;
+        display: grid;
+        place-items: center;
+        font-size: 14px;
+    }
+
+    .metric-val {
+        font-size: 30px;
+        font-weight: 800;
+        color: var(--text-main);
+        margin: 12px 0 4px;
+        letter-spacing: -0.02em;
+        line-height: 1;
+    }
+
+    .metric-desc {
+        font-size: 11px;
+        color: var(--text-subtle);
+    }
+
+    .m-blue .metric-icon { background: var(--info-soft); color: var(--info); }
+    .m-green .metric-icon { background: var(--success-soft); color: var(--success); }
+    .m-purple .metric-icon { background: rgba(124, 58, 237, 0.12); color: #8b5cf6; }
+    .m-slate .metric-icon { background: rgba(100, 116, 139, 0.12); color: #64748b; }
+    .m-red .metric-icon { background: var(--danger-soft); color: var(--danger); }
+
+    /* ── Hero / Page Title ── */
+    .dashboard-header {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 20px;
+        margin-bottom: 24px;
+    }
+
+    .page-title h1 {
+        font-size: 24px;
+        font-weight: 800;
+        color: var(--text-main);
+        letter-spacing: -0.02em;
+    }
+
+    .page-title p {
+        font-size: 13px;
+        color: var(--text-muted);
+        margin-top: 4px;
+    }
+
+    /* ── Attention Card ── */
+    .attention-card {
+        background: var(--danger-soft);
+        border: 1px solid rgba(244, 63, 94, 0.3);
+        border-radius: 14px;
+        padding: 20px 24px;
+        margin-bottom: 28px;
+        display: flex;
+        align-items: flex-start;
+        gap: 16px;
+    }
+
+    .attention-icon-box {
+        width: 36px;
+        height: 36px;
+        border-radius: 10px;
+        background: var(--danger);
+        color: white;
+        display: grid;
+        place-items: center;
+        flex-shrink: 0;
+    }
+
+    .attention-content {
+        flex: 1;
+    }
+
+    .attention-content h3 {
+        font-size: 14px;
+        font-weight: 700;
+        color: var(--danger);
+    }
+
+    .attention-content p {
+        font-size: 12px;
+        color: var(--text-muted);
+        margin-top: 2px;
+        margin-bottom: 12px;
+    }
+
+    .failures-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+        gap: 10px;
+    }
+
+    .failure-item {
+        background: var(--bg-surface);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 10px 14px;
+        font-size: 12px;
+    }
+
+    .failure-item strong {
+        color: var(--text-main);
+    }
+
+    .failure-msg {
+        color: var(--danger);
+        font-size: 11px;
+        margin-top: 4px;
+        word-break: break-word;
+    }
+
+    /* ── Toolbar & Filters ── */
+    .table-toolbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        flex-wrap: wrap;
+        gap: 14px;
+        padding: 16px 24px;
+        border-bottom: 1px solid var(--border);
+        background: var(--bg-surface);
+    }
+
+    .filter-tabs {
+        display: flex;
+        gap: 4px;
+        background: var(--bg-base);
+        padding: 4px;
+        border-radius: 10px;
+        border: 1px solid var(--border);
+    }
+
+    .filter-tab {
+        padding: 6px 14px;
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--text-muted);
+        text-decoration: none;
+        border-radius: 7px;
+        transition: all 0.15s ease;
+    }
+
+    .filter-tab:hover {
+        color: var(--text-main);
+    }
+
+    .filter-tab.active {
+        background: var(--bg-surface);
+        color: var(--primary);
+        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+    }
+
+    .search-form {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+
+    .search-input {
+        background: var(--bg-base);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 8px 14px;
+        font-size: 12px;
+        color: var(--text-main);
+        outline: none;
+        width: 240px;
+        transition: all 0.2s ease;
+    }
+
+    .search-input:focus {
+        border-color: var(--primary);
+        box-shadow: 0 0 0 3px var(--primary-soft);
+        width: 280px;
+    }
+
+    /* ── Custom Data Tables ── */
+    .table-responsive {
+        width: 100%;
+        overflow-x: auto;
+    }
+
+    .data-table {
+        width: 100%;
+        border-collapse: collapse;
+        text-align: left;
+    }
+
+    .data-table th {
+        background: var(--bg-base);
+        color: var(--text-subtle);
+        font-size: 11px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        padding: 14px 20px;
+        border-bottom: 1px solid var(--border);
+        white-space: nowrap;
+    }
+
+    .data-table td {
+        padding: 16px 20px;
+        border-bottom: 1px solid var(--border-subtle);
+        font-size: 13px;
+        vertical-align: middle;
+    }
+
+    .data-table tr:hover td {
+        background: var(--bg-surface-elevated);
+    }
+
+    .user-cell {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+    }
+
+    .user-avatar-mark {
+        width: 36px;
+        height: 36px;
+        border-radius: 9px;
+        background: var(--primary-soft);
+        color: var(--primary);
+        font-weight: 700;
+        font-size: 13px;
+        display: grid;
+        place-items: center;
+        flex-shrink: 0;
+    }
+
+    .user-name-title {
+        font-weight: 700;
+        color: var(--text-main);
+        font-size: 13px;
+    }
+
+    .user-email-subtitle {
+        color: var(--text-muted);
+        font-size: 11px;
+        margin-top: 1px;
+    }
+
+    .status-badge-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 4px 10px;
+        border-radius: 20px;
+        font-size: 11px;
+        font-weight: 700;
+    }
+
+    .status-badge-pill::before {
+        content: '';
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: currentColor;
+    }
+
+    .badge-synced, .badge-created { background: var(--success-soft); color: var(--success); }
+    .badge-updated { background: var(--info-soft); color: var(--info); }
+    .badge-failed { background: var(--danger-soft); color: var(--danger); }
+    .badge-skipped { background: var(--warning-soft); color: var(--warning); }
+    .badge-deactivated { background: var(--bg-base); color: var(--text-subtle); }
+
+    .entra-state {
+        font-size: 10px;
+        color: var(--text-subtle);
+        margin-top: 4px;
+        display: block;
+    }
+
+    .entra-state.enabled { color: var(--success); }
+    .entra-state.disabled { color: var(--danger); }
+
+    /* Expandable Row */
+    .details-row td {
+        padding: 0 20px 20px;
+        background: var(--bg-base);
+    }
+
+    .details-container {
+        background: var(--bg-surface);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 18px 22px;
+    }
+
+    .details-summary {
+        cursor: pointer;
+        font-size: 12px;
+        font-weight: 700;
+        color: var(--primary);
+        outline: none;
+        user-select: none;
+    }
+
+    .details-grid {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 16px;
+        margin-top: 14px;
+    }
+
+    .detail-item-label {
+        font-size: 11px;
+        color: var(--text-subtle);
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+    }
+
+    .detail-item-val {
+        font-size: 12px;
+        color: var(--text-main);
+        font-weight: 600;
+        margin-top: 2px;
+        word-break: break-all;
+    }
+
+    /* ── Pagination ── */
+    .pagination-bar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 16px 24px;
+        background: var(--bg-surface);
+        font-size: 12px;
+        color: var(--text-muted);
+        border-top: 1px solid var(--border);
+    }
+
+    .pagination-links {
+        display: flex;
+        gap: 6px;
+    }
+
+    .page-btn {
+        padding: 6px 12px;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        background: var(--bg-surface);
+        color: var(--text-main);
+        text-decoration: none;
+        font-size: 12px;
+        font-weight: 600;
+    }
+
+    .page-btn:hover {
+        border-color: var(--primary);
+        color: var(--primary);
+    }
+
+    /* ── Sync Runs Grid ── */
+    .runs-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+        gap: 16px;
+        padding: 20px 24px;
+    }
+
+    .run-card {
+        background: var(--bg-base);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 14px 16px;
+    }
+
+    .run-card-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 8px;
+    }
+
+    .run-id {
+        font-family: 'JetBrains Mono', monospace;
+        font-weight: 700;
+        font-size: 12px;
+        color: var(--text-main);
+    }
+
+    .run-stat-row {
+        font-size: 12px;
+        color: var(--text-muted);
+        display: flex;
+        justify-content: space-between;
+        margin-top: 4px;
+    }
+
+    @media (max-width: 1200px) {
+        .metrics-grid {
+            grid-template-columns: repeat(3, 1fr);
+        }
+    }
+
+    @media (max-width: 768px) {
+        .metrics-grid {
+            grid-template-columns: repeat(2, 1fr);
+        }
+        .dashboard-header {
+            flex-direction: column;
+        }
+        .details-grid {
+            grid-template-columns: repeat(2, 1fr);
+        }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<!-- Page Header -->
+<div class="dashboard-header">
+    <div class="page-title">
+        <h1>User Sync Overview</h1>
+        <p>Real-time enterprise synchronization between PeopleStrong HRMS and Microsoft Entra ID.</p>
+    </div>
+    {% if can_change_mgr %}
+    <a href="{% url 'change-l1-manager' %}" class="btn btn-primary">
+        <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+        </svg>
+        <span>Change L1 Manager</span>
+    </a>
+    {% endif %}
+</div>
+
+<!-- Metrics Summary Cards -->
+<div class="metrics-grid">
+    <div class="metric-card m-blue">
+        <div class="metric-top">
+            <span>Tracked Employees</span>
+            <div class="metric-icon">👥</div>
+        </div>
+        <div class="metric-val">{{ counts.total }}</div>
+        <div class="metric-desc">Total records captured from PeopleStrong</div>
+    </div>
+
+    <div class="metric-card m-green">
+        <div class="metric-top">
+            <span>Accounts created</span>
+            <div class="metric-icon">➕</div>
+        </div>
+        <div class="metric-val">{{ counts.created }}</div>
+        <div class="metric-desc">New accounts provisioned in Entra ID</div>
+    </div>
+
+    <div class="metric-card m-purple">
+        <div class="metric-top">
+            <span>Accounts Updated</span>
+            <div class="metric-icon">🔄</div>
+        </div>
+        <div class="metric-val">{{ counts.updated }}</div>
+        <div class="metric-desc">Attributes &amp; managers aligned</div>
+    </div>
+
+    <div class="metric-card m-slate">
+        <div class="metric-top">
+            <span>Deactivated</span>
+            <div class="metric-icon">🚫</div>
+        </div>
+        <div class="metric-val">{{ counts.deactivated }}</div>
+        <div class="metric-desc">Disabled accounts in Entra ID</div>
+    </div>
+
+    <div class="metric-card m-red">
+        <div class="metric-top">
+            <span>Needs Attention</span>
+            <div class="metric-icon">⚠️</div>
+        </div>
+        <div class="metric-val">{{ counts.failed }}</div>
+        <div class="metric-desc">Failed synchronization records</div>
+    </div>
+</div>
+
+<!-- Attention: Latest Failures -->
+{% if recent_failures %}
+<div class="attention-card">
+    <div class="attention-icon-box">
+        <svg width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+        </svg>
+    </div>
+    <div class="attention-content">
+        <h3>Sync Failures Requiring Attention ({{ recent_failures|length }})</h3>
+        <p>The following employee records encountered errors during the latest synchronization run. Review and trigger a safe retry when ready.</p>
+        <div class="failures-grid">
+            {% for item in recent_failures %}
+            <div class="failure-item">
+                <div style="display:flex;justify-content:space-between;">
+                    <strong>{{ item.name }}</strong>
+                    <span style="color:var(--text-subtle);">#{{ item.record.source_employee_id }}</span>
+                </div>
+                <div class="failure-msg">
+                    {{ item.record.last_error_message|default:"Last sync attempt failed."|truncatechars:120 }}
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<!-- ── Main Table: Employee Accounts ── -->
+<div class="card" id="users" style="margin-bottom: 32px;">
+    <div class="card-header">
+        <div>
+            <h2 class="card-title">Employee Accounts</h2>
+            <p class="card-subtitle">Synchronized employee identity records with PeopleStrong and Microsoft Entra ID status.</p>
+        </div>
+        <span class="status-badge-pill" style="background:var(--bg-base);color:var(--text-muted);">
+            {{ record_page.paginator.count }} Records
+        </span>
+    </div>
+
+    <!-- Filters & Search Toolbar -->
+    <div class="table-toolbar">
+        <nav class="filter-tabs">
+            <a href="?filter=all{% if query %}&amp;q={{ query|urlencode }}{% endif %}#users" class="filter-tab {% if selected_filter == 'all' %}active{% endif %}">All</a>
+            <a href="?filter=created{% if query %}&amp;q={{ query|urlencode }}{% endif %}#users" class="filter-tab {% if selected_filter == 'created' %}active{% endif %}">Created</a>
+            <a href="?filter=updated{% if query %}&amp;q={{ query|urlencode }}{% endif %}#users" class="filter-tab {% if selected_filter == 'updated' %}active{% endif %}">Updated</a>
+            <a href="?filter=deactivated{% if query %}&amp;q={{ query|urlencode }}{% endif %}#users" class="filter-tab {% if selected_filter == 'deactivated' %}active{% endif %}">Deactivated</a>
+            <a href="?filter=failed{% if query %}&amp;q={{ query|urlencode }}{% endif %}#users" class="filter-tab {% if selected_filter == 'failed' %}active{% endif %}">Needs Attention</a>
+            <a href="?filter=skipped{% if query %}&amp;q={{ query|urlencode }}{% endif %}#users" class="filter-tab {% if selected_filter == 'skipped' %}active{% endif %}">Skipped</a>
+        </nav>
+
+        <form class="search-form" method="get" action="{% url 'index' %}">
+            <input type="hidden" name="filter" value="{{ selected_filter }}">
+            <input type="search" name="q" value="{{ query }}" class="search-input" placeholder="Search by name, email, or ID...">
+            <button type="submit" class="btn btn-secondary btn-sm">Search</button>
+            {% if query %}
+            <a href="?filter={{ selected_filter }}#users" class="btn btn-secondary btn-sm" title="Clear search">Clear</a>
+            {% endif %}
+        </form>
+    </div>
+
+    <!-- Table -->
+    <div class="table-responsive">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>Employee Details</th>
+                    <th>Employee ID</th>
+                    <th>Department &amp; Designation</th>
+                    <th>Entra Status</th>
+                    <th>Last Attempt</th>
+                    <th style="text-align:right;">Safe Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for item in record_page %}
+                <tr>
+                    <td>
+                        <div class="user-cell">
+                            <div class="user-avatar-mark">
+                                {{ item.name|slice:":1"|upper }}
+                            </div>
+                            <div>
+                                <div class="user-name-title">{{ item.name }}</div>
+                                <div class="user-email-subtitle">{{ item.record.email|default:"No email saved" }}</div>
+                            </div>
+                        </div>
+                    </td>
+                    <td>
+                        <span style="font-family:'JetBrains Mono',monospace;font-weight:600;font-size:12px;">
+                            {{ item.record.source_employee_id|default:"—" }}
+                        </span>
+                    </td>
+                    <td>
+                        <div style="font-weight:600;color:var(--text-main);">{{ item.record.department|default:"Department not set" }}</div>
+                        <div style="font-size:11px;color:var(--text-muted);">{{ item.record.designation|default:"Role not set" }}</div>
+                    </td>
+                    <td>
+                        <div>
+                            {% if item.status == "FAILED" %}
+                            <span class="status-badge-pill badge-failed">Failed</span>
+                            {% elif item.status == "SKIPPED" %}
+                            <span class="status-badge-pill badge-skipped">Skipped</span>
+                            {% elif item.action == "created" %}
+                            <span class="status-badge-pill badge-created">Created</span>
+                            {% elif item.action == "updated" %}
+                            <span class="status-badge-pill badge-updated">Updated</span>
+                            {% elif item.action == "deactivated" %}
+                            <span class="status-badge-pill badge-deactivated">Deactivated</span>
+                            {% elif item.status == "SYNCED" %}
+                            <span class="status-badge-pill badge-synced">{{ item.action_label }}</span>
+                            {% else %}
+                            <span class="status-badge-pill badge-deactivated">{{ item.action_label }}</span>
+                            {% endif %}
+
+                            {% if item.account_not_found %}
+                            <span class="entra-state disabled">&bull; Missing in Entra</span>
+                            {% elif item.account_enabled == True %}
+                            <span class="entra-state enabled">&bull; Last synced setting: enabled</span>
+                            {% elif item.account_enabled == False %}
+                            <span class="entra-state disabled">&bull; Last synced setting: disabled</span>
+                            {% endif %}
+                        </div>
+                    </td>
+                    <td>
+                        <div style="font-weight:600;color:var(--text-main);">
+                            {% if item.record.last_synced_at %}
+                                {{ item.record.last_synced_at|date:"M j, Y · g:i A" }}
+                            {% elif item.record.updated_at %}
+                                {{ item.record.updated_at|date:"M j, Y · g:i A" }}
+                            {% else %}
+                                Not synced yet
+                            {% endif %}
+                        </div>
+                        <div style="font-size:11px;color:var(--text-muted);">
+                            {{ item.record.attempt_count }} attempt{{ item.record.attempt_count|pluralize }}
+                            {% if item.record.last_error_code %} · {{ item.record.last_error_code }}{% endif %}
+                        </div>
+                    </td>
+                    <td style="text-align:right;">
+                        <div style="display:inline-flex;gap:8px;">
+                            <!-- Retry Button -->
+                            <form method="post" action="{% url 'record-action' item.record.pk %}" id="retryForm{{ item.record.pk }}">
+                                {% csrf_token %}
+                                <input type="hidden" name="action" value="retry">
+                                <button type="button" class="btn btn-primary btn-sm" 
+                                    {% if not can_retry %}disabled title="Your role does not allow retrying sync"{% endif %}
+                                    onclick="showConfirmModal('Retry Sync for {{ item.name|escapejs }}', 'This creates the user account in Microsoft Entra if missing, or updates all attributes if existing.', document.getElementById('retryForm{{ item.record.pk }}'));">
+                                    Retry Sync
+                                </button>
+                            </form>
+
+                            <!-- Disable Button -->
+                            {% if can_deactivate %}
+                            <form method="post" action="{% url 'record-action' item.record.pk %}" id="deactivateForm{{ item.record.pk }}">
+                                {% csrf_token %}
+                                <input type="hidden" name="action" value="deactivate">
+                                <button type="button" class="btn btn-danger-outline btn-sm"
+                                    onclick="showConfirmModal('Deactivate {{ item.name|escapejs }} in Entra', 'Are you sure you want to disable this account in Microsoft Entra? Sign-in will be immediately blocked.', document.getElementById('deactivateForm{{ item.record.pk }}'), true);">
+                                    Disable
+                                </button>
+                            </form>
+                            {% endif %}
+                        </div>
+                    </td>
+                </tr>
+
+                <!-- Expandable Details Row -->
+                <tr class="details-row">
+                    <td colspan="6">
+                        <details class="details-container">
+                            <summary class="details-summary">View Full Identity &amp; Manager Metadata</summary>
+                            <div class="details-grid">
+                                <div><div class="detail-item-label">Employment Status</div><div class="detail-item-val">{{ item.employment_status }}</div></div>
+                                <div><div class="detail-item-label">Company</div><div class="detail-item-val">{{ item.company|default:"Not specified" }}</div></div>
+                                <div><div class="detail-item-label">Work Location</div><div class="detail-item-val">{% firstof item.office item.city item.state item.country "Not specified" %}</div></div>
+                                <div><div class="detail-item-label">Mobile Number</div><div class="detail-item-val">{{ item.mobile|default:"Not specified" }}</div></div>
+                                <div><div class="detail-item-label">L1 Manager Name</div><div class="detail-item-val">{{ item.manager_name|default:"Not assigned" }}</div></div>
+                                <div><div class="detail-item-label">L1 Manager Email</div><div class="detail-item-val">{{ item.manager_email|default:"Not specified" }}</div></div>
+                                <div><div class="detail-item-label">Manager Sync Status</div><div class="detail-item-val">{{ item.record.manager_sync_status|default:"Not attempted" }}</div></div>
+                                <div><div class="detail-item-label">Last Manager Sync</div><div class="detail-item-val">{{ item.record.manager_last_synced_at|date:"M j, Y · g:i A"|default:"Never" }}</div></div>
+                            </div>
+                            {% if item.record.manager_error_message %}
+                            <div style="margin-top:12px;font-size:11px;color:var(--danger);background:var(--danger-soft);padding:8px 12px;border-radius:6px;">
+                                <strong>Manager Sync Note:</strong> {{ item.record.manager_error_message }}
+                            </div>
+                            {% endif %}
+                            {% if item.record.last_error_message %}
+                            <div style="margin-top:8px;font-size:11px;color:var(--danger);background:var(--danger-soft);padding:8px 12px;border-radius:6px;">
+                                <strong>Last Sync Error:</strong> {{ item.record.last_error_message }}
+                            </div>
+                            {% endif %}
+                        </details>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="6" style="text-align:center;padding:48px 20px;color:var(--text-muted);">
+                        <div style="font-size:32px;margin-bottom:8px;">🔍</div>
+                        <strong style="color:var(--text-main);font-size:15px;display:block;">No employee sync records found</strong>
+                        <p style="font-size:12px;margin-top:4px;">Try refining your search keyword or clearing the filter.</p>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Pagination -->
+    {% if record_page.paginator.num_pages > 1 %}
+    <div class="pagination-bar">
+        <span>Showing page <strong>{{ record_page.number }}</strong> of <strong>{{ record_page.paginator.num_pages }}</strong></span>
+        <div class="pagination-links">
+            {% if record_page.has_previous %}
+            <a href="?filter={{ selected_filter }}&amp;q={{ query|urlencode }}&amp;page={{ record_page.previous_page_number }}#users" class="page-btn">&larr; Previous</a>
+            {% endif %}
+            {% if record_page.has_next %}
+            <a href="?filter={{ selected_filter }}&amp;q={{ query|urlencode }}&amp;page={{ record_page.next_page_number }}#users" class="page-btn">Next &rarr;</a>
+            {% endif %}
+        </div>
+    </div>
+    {% endif %}
+</div>
+
+<!-- ── Audit Activity Logs ── -->
+<div class="card" id="activity" style="margin-bottom: 32px;">
+    <div class="card-header">
+        <div>
+            <h2 class="card-title">Activity &amp; sync logs</h2>
+            <p class="card-subtitle">Complete chronological trace of all automated synchronizations and manual employee updates.</p>
+        </div>
+        <span class="status-badge-pill" style="background:var(--bg-base);color:var(--text-muted);">
+            {{ log_page|length }} Entries
+        </span>
+    </div>
+
+    <div class="table-responsive">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>Timestamp</th>
+                    <th>Target / Run</th>
+                    <th>Result</th>
+                    <th>Severity</th>
+                    <th>Details &amp; Reason</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for entry in log_entries %}
+                {% with log=entry.log %}
+                <tr>
+                    <td style="white-space:nowrap;font-size:12px;color:var(--text-muted);">
+                        {{ log.created_at|date:"M j, Y · g:i:s A" }}
+                    </td>
+                    <td>
+                        <div style="font-weight:600;color:var(--text-main);">
+                            {% if entry.employee_name %}{{ entry.employee_name }}
+                            {% elif log.source_employee_id %}Employee #{{ log.source_employee_id }}
+                            {% else %}Scheduled Run
+                            {% endif %}
+                        </div>
+                        {% if entry.employee_email %}
+                        <div style="font-size:11px;color:var(--text-subtle);">{{ entry.employee_email }}</div>
+                        {% endif %}
+                        <span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--text-subtle);">Run #{{ log.sync_run_id }}</span>
+                    </td>
+                    <td>
+                        <span class="status-badge-pill 
+                            {% if log.status == 'SUCCESS' %}badge-synced
+                            {% elif log.status == 'FAILED' %}badge-failed
+                            {% elif log.status == 'SKIPPED' %}badge-skipped
+                            {% else %}badge-updated{% endif %}">
+                            {{ log.status }}
+                        </span>
+                        {% if log.error_code %}
+                        <div style="font-size:10px;font-family:'JetBrains Mono',monospace;color:var(--text-subtle);margin-top:2px;">{{ log.error_code }}</div>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <span style="font-size:10px;font-weight:700;padding:2px 6px;border-radius:4px;
+                            {% if log.level == 'ERROR' %}background:var(--danger-soft);color:var(--danger);
+                            {% elif log.level == 'WARNING' %}background:var(--warning-soft);color:var(--warning);
+                            {% else %}background:var(--info-soft);color:var(--info);{% endif %}">
+                            {{ log.level }}
+                        </span>
+                    </td>
+                    <td style="max-width:540px;font-size:12px;color:var(--text-muted);word-break:break-word;">
+                        {{ log.message|default:"No details recorded." }}
+                    </td>
+                </tr>
+                {% endwith %}
+                {% empty %}
+                <tr>
+                    <td colspan="5" style="text-align:center;padding:36px;color:var(--text-muted);">
+                        No activity logs recorded yet.
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    {% if log_page.paginator.num_pages > 1 %}
+    <div class="pagination-bar">
+        <span>Showing page <strong>{{ log_page.number }}</strong> of <strong>{{ log_page.paginator.num_pages }}</strong></span>
+        <div class="pagination-links">
+            {% if log_page.has_previous %}
+            <a href="?log_page={{ log_page.previous_page_number }}#activity" class="page-btn">&larr; Previous</a>
+            {% endif %}
+            {% if log_page.has_next %}
+            <a href="?log_page={{ log_page.next_page_number }}#activity" class="page-btn">Next &rarr;</a>
+            {% endif %}
+        </div>
+    </div>
+    {% endif %}
+</div>
+
+<!-- ── Recent Sync Runs ── -->
+<div class="card">
+    <div class="card-header">
+        <div>
+            <h2 class="card-title">Recent Batch Sync Runs</h2>
+            <p class="card-subtitle">Historical overview of background batch executions.</p>
+        </div>
+    </div>
+
+    <div class="runs-grid">
+        {% for run in runs %}
+        <div class="run-card">
+            <div class="run-card-header">
+                <span class="run-id">#{{ run.id }}</span>
+                <span class="status-badge-pill {% if run.status == 'COMPLETED' %}badge-synced{% elif run.status == 'FAILED' %}badge-failed{% else %}badge-updated{% endif %}" style="font-size:10px;padding:2px 8px;">
+                    {{ run.status }}
+                </span>
+            </div>
+            <div style="font-size:11px;color:var(--text-subtle);margin-bottom:8px;">
+                Started {{ run.started_at|date:"M j, g:i A" }}
+            </div>
+            <div class="run-stat-row">
+                <span>Total records:</span>
+                <strong>{{ run.total_records }}</strong>
+            </div>
+            <div class="run-stat-row">
+                <span>Synced:</span>
+                <strong style="color:var(--success);">{{ run.synced_records }}</strong>
+            </div>
+            <div class="run-stat-row">
+                <span>Failed:</span>
+                <strong style="color:var(--danger);">{{ run.failed_records }}</strong>
+            </div>
+            {% if run.notes %}
+            <div style="margin-top:8px;font-size:11px;color:var(--danger);background:var(--danger-soft);padding:4px 8px;border-radius:4px;">
+                {{ run.notes|truncatechars:80 }}
+            </div>
+            {% endif %}
+        </div>
+        {% empty %}
+        <div style="grid-column:1/-1;text-align:center;padding:20px;color:var(--text-muted);">
+            No sync runs recorded yet.
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endblock %}

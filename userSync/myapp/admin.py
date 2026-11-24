@@ -1,6 +1,37 @@
 from django.contrib import admin
+from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
+from django.contrib.auth.models import User
 
-from .models import EmployeeSyncRecord, SyncLog, SyncRun
+from .models import EmployeeSyncRecord, SyncLog, SyncRun, UserProfile
+
+
+class UserProfileInline(admin.StackedInline):
+    model = UserProfile
+    can_delete = False
+    verbose_name_plural = "User Profile (RBAC)"
+    fields = ("role", "department", "phone")
+
+
+admin.site.unregister(User)
+
+
+@admin.register(User)
+class UserAdmin(BaseUserAdmin):
+    inlines = (UserProfileInline,)
+    list_display = ("username", "email", "first_name", "last_name", "get_role", "is_staff", "is_active")
+    list_select_related = ("profile",)
+
+    @admin.display(description="Role")
+    def get_role(self, obj):
+        profile = getattr(obj, "profile", None)
+        return profile.get_role_display() if profile else ("Super Admin" if obj.is_superuser else "Standard")
+
+
+@admin.register(UserProfile)
+class UserProfileAdmin(admin.ModelAdmin):
+    list_display = ("user", "role", "department", "phone", "updated_at")
+    list_filter = ("role",)
+    search_fields = ("user__username", "user__email", "department")
 
 
 class SyncLogInline(admin.TabularInline):
